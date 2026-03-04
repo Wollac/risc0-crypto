@@ -14,11 +14,11 @@ Uses fewer cycles than the patched upstream crates provided by RISC Zero.
 
 ## Supported Curves
 
-- [secp256k1](https://docs.rs/risc0-crypto/latest/risc0_crypto/curves/secp256k1/)
-- [secp256r1](https://docs.rs/risc0-crypto/latest/risc0_crypto/curves/secp256r1/)
-- [BN254](https://docs.rs/risc0-crypto/latest/risc0_crypto/curves/bn254/)
-- [Grumpkin](https://docs.rs/risc0-crypto/latest/risc0_crypto/curves/grumpkin/)
-- [BLS12-381](https://docs.rs/risc0-crypto/latest/risc0_crypto/curves/bls12_381/)
+- [secp256k1](src/curves/secp256k1.rs)
+- [secp256r1](src/curves/secp256r1.rs)
+- [BN254](src/curves/bn254.rs)
+- [Grumpkin](src/curves/grumpkin.rs)
+- [BLS12-381](src/curves/bls12_381.rs)
 
 ## Example
 
