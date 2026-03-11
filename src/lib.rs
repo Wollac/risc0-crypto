@@ -42,5 +42,5 @@ macro_rules! fp {
 
 pub use bigint::BigInt;
 pub use curve::{AffinePoint, SWCurveConfig};
-pub use field::{Fp, Fp256, Fp384, PrimeFieldConfig};
+pub use field::{Fp, Fp256, Fp384, FpConfig, R0FieldConfig, Unreduced};
 pub use modexp::{BitAccess, ModMul, modexp};

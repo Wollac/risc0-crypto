@@ -2,7 +2,7 @@ mod ops;
 
 use crate::{
     BigInt,
-    field::{FieldArith, Fp, PrimeFieldConfig},
+    field::{Fp, FpConfig, Unreduced},
 };
 use core::marker::PhantomData;
 use risc0_bigint2::ec;
@@ -32,12 +32,9 @@ pub type BaseField<C, const N: usize> = Fp<<C as SWCurveConfig<N>>::BaseFieldCon
 pub type ScalarField<C, const N: usize> = Fp<<C as SWCurveConfig<N>>::ScalarFieldConfig, N>;
 
 /// A trait that defines the configuration of a short Weierstrass curve `y² = x³ + ax + b`.
-pub trait SWCurveConfig<const N: usize>: Send + Sync + 'static + Sized
-where
-    [u32; N]: FieldArith,
-{
-    type BaseFieldConfig: PrimeFieldConfig<N>;
-    type ScalarFieldConfig: PrimeFieldConfig<N>;
+pub trait SWCurveConfig<const N: usize>: Send + Sync + 'static + Sized {
+    type BaseFieldConfig: FpConfig<N>;
+    type ScalarFieldConfig: FpConfig<N>;
 
     const COEFF_A: BaseField<Self, N>;
     const COEFF_B: BaseField<Self, N>;
@@ -59,14 +56,11 @@ where
 #[educe(Debug, PartialEq, Eq, Hash)]
 pub(crate) struct CurveBridge<C, const N: usize>(#[educe(Debug(ignore))] PhantomData<C>);
 
-impl<C: SWCurveConfig<N>, const N: usize> ec::Curve<N> for CurveBridge<C, N>
-where
-    [u32; N]: FieldArith,
-{
+impl<C: SWCurveConfig<N>, const N: usize> ec::Curve<N> for CurveBridge<C, N> {
     const CURVE: &'static ec::WeierstrassCurve<N> = &ec::WeierstrassCurve::new(
         C::BaseFieldConfig::MODULUS.0,
-        C::COEFF_A.to_limbs(),
-        C::COEFF_B.to_limbs(),
+        C::COEFF_A.to_bigint().0,
+        C::COEFF_B.to_bigint().0,
     );
 }
 
@@ -80,17 +74,11 @@ where
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, PartialEq, Eq, Hash)]
 #[must_use]
-pub struct AffinePoint<C: SWCurveConfig<N>, const N: usize>
-where
-    [u32; N]: FieldArith,
-{
+pub struct AffinePoint<C: SWCurveConfig<N>, const N: usize> {
     inner: ec::AffinePoint<N, CurveBridge<C, N>>,
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N>
-where
-    [u32; N]: FieldArith,
-{
+impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// The point at infinity (additive identity).
     pub const IDENTITY: Self = Self { inner: ec::AffinePoint::IDENTITY };
 
@@ -108,7 +96,7 @@ where
     /// Creates a point from coordinates without validating on-curve or subgroup membership.
     #[inline]
     pub const fn new_unchecked(x: BaseField<C, N>, y: BaseField<C, N>) -> Self {
-        Self { inner: const_affine_point([x.to_limbs(), y.to_limbs()]) }
+        Self { inner: const_affine_point([x.to_bigint().0, y.to_bigint().0]) }
     }
 
     /// Returns `true` if this is the point at infinity.
@@ -126,39 +114,25 @@ where
     }
 
     /// Checks `y² = x³ + ax + b` using field arithmetic.
+    ///
+    /// Uses [`Unreduced`] for intermediate results (fewer cycles) and checks
+    /// canonicality only for the final comparison.
     pub fn is_on_curve(&self) -> bool {
         let Some((x, y)) = self.xy() else {
             return true; // identity is on every curve
         };
+        let (x, y) = (Unreduced::new(x), Unreduced::new(y));
 
-        let mut t1 = Fp::ZERO;
-        let mut t2 = Fp::ZERO;
+        let lhs = &y * &y;
 
-        // unchecked: intermediate results that feed the checked final operations
-        // t1 <- x^2
-        t1.mul_unchecked(&x, &x);
-
-        // When a=0 (e.g. BN254), the compiler eliminates the unused branch,
-        // saving one modadd syscall by computing x^3 + b directly.
-        if C::COEFF_A.is_zero() {
-            // t2 <- x^3
-            t2.mul_unchecked(&t1, &x);
-            // t1 <- x^3 + b [RHS]
-            t1.add(&t2, &C::COEFF_B);
-            // t2 <- y^2 [LHS]
-            t2.mul(&y, &y);
-        } else {
-            // t2 <- x^2 + a
-            t2.add_unchecked(&t1, &C::COEFF_A);
-            // t1 <- x(x^2 + a)
-            t1.mul_unchecked(&t2, &x);
-            // t2 <- (x^3 + ax) + b [RHS]
-            t2.add(&t1, &C::COEFF_B);
-            // t1 <- y^2 [LHS]
-            t1.mul(&y, &y);
+        let mut rhs = &x * &x;
+        if !C::COEFF_A.is_zero() {
+            rhs += &C::COEFF_A;
         }
+        rhs *= &x;
+        rhs += &C::COEFF_B;
 
-        t1 == t2
+        lhs.check() == rhs.check()
     }
 
     /// Returns `true` if this point is in the prime-order subgroup.
@@ -189,9 +163,7 @@ where
             *self = *a;
             return;
         };
-        let mut neg_y = Fp::ZERO;
-        neg_y.neg(&y);
-        self.add_into(a, &Self::new_unchecked(x, neg_y));
+        self.add_into(a, &Self::new_unchecked(x, -&y));
     }
 
     /// Computes `self = [scalar] * a` (scalar multiplication).
@@ -201,10 +173,7 @@ where
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> core::fmt::Debug for AffinePoint<C, N>
-where
-    [u32; N]: FieldArith,
-{
+impl<C: SWCurveConfig<N>, const N: usize> core::fmt::Debug for AffinePoint<C, N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self.xy() {
             Some((x, y)) => f.debug_struct("AffinePoint").field("x", &x).field("y", &y).finish(),
@@ -216,10 +185,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        BigInt,
-        field::{Fp256, PrimeFieldConfig},
-    };
+    use crate::{BigInt, R0FieldConfig, field::Fp256};
 
     // --- Toy curve: y² = x³ + x + 1 over F_7, order 5 ---
     //
@@ -227,13 +193,13 @@ mod tests {
     // Group:  G=(0,1), 2G=(2,5), 3G=(2,2), 4G=(0,6), 5G=O
 
     enum FqConfig {}
-    impl PrimeFieldConfig<8> for FqConfig {
+    impl R0FieldConfig<8> for FqConfig {
         const MODULUS: BigInt<8> = BigInt::from_u32(7);
     }
     type Fq = Fp256<FqConfig>;
 
     enum FrConfig {}
-    impl PrimeFieldConfig<8> for FrConfig {
+    impl R0FieldConfig<8> for FrConfig {
         const MODULUS: BigInt<8> = BigInt::from_u32(5);
     }
     type Fr = Fp256<FrConfig>;
@@ -290,24 +256,24 @@ mod tests {
         let o = Affine::IDENTITY;
 
         // Identity
-        assert_eq!(g + o, g);
-        assert_eq!(o + g, g);
-        assert_eq!(g - o, g);
-        assert!((g - g).is_identity());
+        assert_eq!(&g + &o, g);
+        assert_eq!(&o + &g, g);
+        assert_eq!(&g - &o, g);
+        assert!((&g - &g).is_identity());
 
         // Doubling
         let mut two_g = Affine::IDENTITY;
         two_g.double_into(&g);
-        assert_eq!(g + g, two_g);
+        assert_eq!(&g + &g, two_g);
 
         // Commutativity
-        assert_eq!(g + two_g, two_g + g);
+        assert_eq!(&g + &two_g, &two_g + &g);
 
         // Walk the full group: G, 2G, 3G, 4G, 5G=O
         assert_eq!(two_g, pt(2, 5)); // 2G
-        assert_eq!(g + two_g, pt(2, 2)); // 3G
-        assert_eq!(two_g + two_g, pt(0, 6)); // 4G
-        assert!((two_g + pt(2, 2)).is_identity()); // 2G + 3G = 5G = O
+        assert_eq!(&g + &two_g, pt(2, 2)); // 3G
+        assert_eq!(&two_g + &two_g, pt(0, 6)); // 4G
+        assert!((&two_g + &pt(2, 2)).is_identity()); // 2G + 3G = 5G = O
     }
 
     #[test]
@@ -318,7 +284,7 @@ mod tests {
         assert!((&g * &Fr::ZERO).is_identity());
 
         // [n]G = O (group order)
-        let order = Fr::from_bigint_unchecked(FrConfig::MODULUS);
+        let order = Fr::from_bigint_unchecked(Fr::MODULUS);
         assert!((&g * &order).is_identity());
 
         // [2]G + [3]G = [5]G = O

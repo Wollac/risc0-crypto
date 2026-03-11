@@ -4,14 +4,13 @@
 //! - Base field: 381-bit
 //! - Cofactor: `0x396c8c005555e1568c00aaab0000aaab`
 //! - Spec: <https://datatracker.ietf.org/doc/draft-irtf-cfrg-pairing-friendly-curves/>
-
-use crate::{AffinePoint, BigInt, Fp, PrimeFieldConfig, SWCurveConfig, bigint, fp};
+use crate::{AffinePoint, BigInt, Fp, R0FieldConfig, SWCurveConfig, bigint, fp};
 
 // --- Base field (Fq): coordinates, modulus = q (381 bits) ---
 
 pub enum FqConfig {}
 
-impl PrimeFieldConfig<12> for FqConfig {
+impl R0FieldConfig<12> for FqConfig {
     const MODULUS: BigInt<12> = bigint!(
         "0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab"
     );
@@ -23,7 +22,7 @@ pub type Fq = Fp<FqConfig, 12>;
 
 pub enum FrConfig {}
 
-impl PrimeFieldConfig<12> for FrConfig {
+impl R0FieldConfig<12> for FrConfig {
     const MODULUS: BigInt<12> =
         bigint!("0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
 }
@@ -70,7 +69,7 @@ mod tests {
     #[test]
     fn mul_group_order_is_identity() {
         let order = Fr::from_bigint_unchecked(FrConfig::MODULUS);
-        assert!((Affine::GENERATOR * order).is_identity());
+        assert!((&Affine::GENERATOR * &order).is_identity());
     }
 
     /// EIP-2537 - G1 scalar multiplication test vectors: verify [k]G == (x, y).
@@ -87,7 +86,7 @@ mod tests {
         fp!("0x17cd7061575d3e8034fcea62adaa1a3bc38dca4b50e4c5c01d04dd78037c9cee914e17944ea99e7ad84278e5d49f36c4"),
     )]
     fn eip2537_scalar_mul(#[case] k: Fr, #[case] expected_x: Fq, #[case] expected_y: Fq) {
-        let result = Affine::GENERATOR * k;
+        let result = &Affine::GENERATOR * &k;
         let (rx, ry) = result.xy().expect("result should not be identity");
         assert_eq!(rx, expected_x);
         assert_eq!(ry, expected_y);

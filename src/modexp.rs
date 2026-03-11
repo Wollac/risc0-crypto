@@ -127,7 +127,7 @@ where
     }
 
     // verify result is canonical (honest prover check)
-    assert!(cur.is_less(modulus));
+    assert!(*cur < *modulus);
 
     *cur
 }

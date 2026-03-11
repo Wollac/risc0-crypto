@@ -6,7 +6,7 @@ license = "Apache-2.0"
 description = "Cryptographic primitives built on risc0-bigint2"
 
 [dependencies]
-bytemuck = "1.25.0"
+bytemuck = { version = "1.25", features = ["derive"] }
 educe = "0.6.0"
 risc0-bigint2 = "1.4.13"
 

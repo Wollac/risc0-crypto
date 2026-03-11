@@ -40,7 +40,7 @@ pub type Affine = AffinePoint<Config, 8>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PrimeFieldConfig;
+    use crate::FpConfig;
     use rstest::rstest;
 
     #[test]
@@ -52,7 +52,7 @@ mod tests {
     #[test]
     fn mul_group_order_is_identity() {
         let order = Fr::from_bigint_unchecked(FrConfig::MODULUS);
-        assert!((Affine::GENERATOR * order).is_identity());
+        assert!((&Affine::GENERATOR * &order).is_identity());
     }
 
     /// noir-lang/noir bn254_blackbox_solver - scalar multiplication test vectors
@@ -63,7 +63,7 @@ mod tests {
         fp!("0x23f10e9e43a3ae8d75d24154e796aae12ae7af546716e8f81a2564f1b5814130"),
     )]
     fn noir_scalar_mul(#[case] k: Fr, #[case] expected_x: Fq, #[case] expected_y: Fq) {
-        let result = Affine::GENERATOR * k;
+        let result = &Affine::GENERATOR * &k;
         let (rx, ry) = result.xy().expect("result should not be identity");
         assert_eq!(rx, expected_x);
         assert_eq!(ry, expected_y);

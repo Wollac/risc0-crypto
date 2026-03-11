@@ -5,13 +5,13 @@
 //! - Cofactor: 1
 //! - Spec: <https://eips.ethereum.org/EIPS/eip-197>
 
-use crate::{AffinePoint, BigInt, Fp, PrimeFieldConfig, SWCurveConfig, bigint, fp};
+use crate::{AffinePoint, BigInt, Fp, R0FieldConfig, SWCurveConfig, bigint, fp};
 
 // --- Base field (Fq): coordinates, modulus = q ---
 
 pub enum FqConfig {}
 
-impl PrimeFieldConfig<8> for FqConfig {
+impl R0FieldConfig<8> for FqConfig {
     const MODULUS: BigInt<8> =
         bigint!("0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47");
 }
@@ -22,7 +22,7 @@ pub type Fq = Fp<FqConfig, 8>;
 
 pub enum FrConfig {}
 
-impl PrimeFieldConfig<8> for FrConfig {
+impl R0FieldConfig<8> for FrConfig {
     const MODULUS: BigInt<8> =
         bigint!("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001");
 }
@@ -64,7 +64,7 @@ mod tests {
     #[test]
     fn mul_group_order_is_identity() {
         let order = Fr::from_bigint_unchecked(FrConfig::MODULUS);
-        assert!((Affine::GENERATOR * order).is_identity());
+        assert!((&Affine::GENERATOR * &order).is_identity());
     }
 
     /// Vyper/EIP-196 - ecmul test vectors for G=(1,2): verify [k]G == (x, y).
@@ -80,7 +80,7 @@ mod tests {
         fp!("0x2ab799bee0489429554fdb7c8d086475319e63b40b9c5b57cdf1ff3dd9fe2261"),
     )]
     fn eip196_scalar_mul(#[case] k: Fr, #[case] expected_x: Fq, #[case] expected_y: Fq) {
-        let result = Affine::GENERATOR * k;
+        let result = &Affine::GENERATOR * &k;
         let (rx, ry) = result.xy().expect("result should not be identity");
         assert_eq!(rx, expected_x);
         assert_eq!(ry, expected_y);

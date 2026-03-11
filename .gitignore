@@ -10,3 +10,6 @@ target/
 
 # Claude Code
 .claude/
+
+# Benchmarks (local only)
+bench/
