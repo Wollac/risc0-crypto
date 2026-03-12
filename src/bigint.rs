@@ -4,9 +4,9 @@ use core::{
 };
 
 /// A fixed-size `N * 32`-bit integer stored as `N` little-endian `u32` limbs.
-#[repr(transparent)]
 #[derive(Copy, Clone, PartialEq, Eq, Hash, bytemuck::TransparentWrapper)]
 #[must_use]
+#[repr(transparent)]
 pub struct BigInt<const N: usize>(pub [u32; N]);
 
 impl<const N: usize> BigInt<N> {

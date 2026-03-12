@@ -2,10 +2,8 @@ pub(crate) mod ops;
 mod unreduced;
 
 use crate::BigInt;
-use core::{
-    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
-    ptr,
-};
+use bytemuck::TransparentWrapper;
+use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 pub use unreduced::Unreduced;
 
@@ -67,10 +65,10 @@ pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
 /// Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`.
 /// For performance-sensitive chains of arithmetic, use [`Unreduced`] which defers the canonicality
 /// check until you call [`.check()`](Unreduced::check).
-#[repr(transparent)]
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, PartialEq, Eq, Hash)]
 #[must_use]
+#[repr(transparent)]
 pub struct Fp<P, const N: usize> {
     inner: BigInt<N>,
     _marker: core::marker::PhantomData<P>,
@@ -122,11 +120,8 @@ impl<P, const N: usize> Fp<P, N> {
 
     /// Reinterprets this field element as an [`Unreduced`] (zero-cost).
     #[inline]
-    pub const fn as_unreduced(&self) -> &Unreduced<P, N> {
-        const { assert!(size_of::<Self>() == size_of::<Unreduced<P, N>>()) };
-        const { assert!(align_of::<Self>() == align_of::<Unreduced<P, N>>()) };
-        // SAFETY: Unreduced is #[repr(transparent)] over Fp; size/align checked above.
-        unsafe { &*ptr::from_ref(self).cast() }
+    pub fn as_unreduced(&self) -> &Unreduced<P, N> {
+        Unreduced::wrap_ref(&self.inner)
     }
 
     /// Reinterprets this field element as `&mut Unreduced` (zero-cost).
@@ -137,10 +132,7 @@ impl<P, const N: usize> Fp<P, N> {
     /// (e.g. via `assert!(self.is_valid())`).
     #[inline]
     unsafe fn as_unreduced_mut(&mut self) -> &mut Unreduced<P, N> {
-        const { assert!(size_of::<Self>() == size_of::<Unreduced<P, N>>()) };
-        const { assert!(align_of::<Self>() == align_of::<Unreduced<P, N>>()) };
-        // SAFETY: Unreduced is #[repr(transparent)] over Fp; size/align checked above.
-        unsafe { &mut *ptr::from_mut(self).cast() }
+        Unreduced::wrap_mut(&mut self.inner)
     }
 }
 

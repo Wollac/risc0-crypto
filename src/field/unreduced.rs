@@ -10,10 +10,10 @@ use core::{
 /// Arithmetic on `Unreduced` skips the `assert!(result < p)` canonicality check that [`Fp`]
 /// performs after every operation. Convert back to [`Fp`] via [`.check()`](Self::check) to
 /// assert canonicality, or [`.reduce()`](Self::reduce) to force reduction.
-#[repr(transparent)]
 #[derive(educe::Educe)]
 #[educe(Copy, Clone)]
 #[must_use]
+#[repr(transparent)]
 pub struct Unreduced<P, const N: usize>(Fp<P, N>);
 
 // SAFETY: Unreduced is #[repr(transparent)] over Fp, which is #[repr(transparent)] over BigInt.
