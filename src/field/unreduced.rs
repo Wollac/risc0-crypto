@@ -189,6 +189,15 @@ impl<P: FpConfig<N>, const N: usize> SubAssign<&Self> for Unreduced<P, N> {
     }
 }
 
+impl<P: FpConfig<N>, const N: usize> SubAssign<&Fp<P, N>> for Unreduced<P, N> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: &Fp<P, N>) {
+        let ptr = ptr::from_mut(self);
+        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
+        unsafe { P::fp_sub(ptr, rhs.as_unreduced(), ptr) };
+    }
+}
+
 impl<P: FpConfig<N>, const N: usize> MulAssign<&Self> for Unreduced<P, N> {
     #[inline]
     fn mul_assign(&mut self, rhs: &Self) {
