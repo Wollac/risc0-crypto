@@ -4,6 +4,7 @@ use crate::{
     BigInt,
     field::{Fp, FpConfig, Unreduced},
 };
+use bytemuck::TransparentWrapper;
 use core::marker::PhantomData;
 use risc0_bigint2::ec;
 
@@ -40,7 +41,7 @@ pub trait SWCurveConfig<const N: usize>: Send + Sync + 'static + Sized {
     const COEFF_B: BaseField<Self, N>;
     const GENERATOR: AffinePoint<Self, N>;
 
-    /// Subgroup membership check. Default checks `[order] * P == O`.
+    /// Subgroup membership check. Default checks `[order]P == O`.
     /// Override for curves with cofactor 1 (where this is always true).
     fn is_in_correct_subgroup(p: &AffinePoint<Self, N>) -> bool {
         let mut result = AffinePoint::IDENTITY;
@@ -68,9 +69,9 @@ impl<C: SWCurveConfig<N>, const N: usize> ec::Curve<N> for CurveBridge<C, N> {
 
 /// A point on a short Weierstrass curve in affine coordinates `(x, y)`.
 ///
-/// Supports addition, subtraction, doubling, and scalar multiplication via operator
-/// overloads (`+`, `-`, `*`) or explicit `_into` methods. The `_into` methods write
-/// the result into `self`, avoiding temporaries.
+/// Supports addition, subtraction, doubling, and scalar multiplication via operator overloads
+/// (`+`, `-`, `*`) or explicit `_into` methods. The `_into` methods write the result into `self`,
+/// avoiding temporaries.
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, PartialEq, Eq, Hash)]
 #[must_use]
@@ -85,8 +86,8 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// The curve's standard generator point.
     pub const GENERATOR: Self = C::GENERATOR;
 
-    /// Creates a point from coordinates, returning `None` if the point is not on the
-    /// curve or not in the correct subgroup.
+    /// Creates a point from coordinates, returning `None` if the point is not on the curve or
+    /// not in the correct subgroup.
     #[inline]
     pub fn new(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
         let p = Self::new_unchecked(x, y);
@@ -101,6 +102,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
     /// Returns `true` if this is the point at infinity.
     #[inline]
+    #[must_use]
     pub fn is_identity(&self) -> bool {
         self.inner.is_identity()
     }
@@ -115,21 +117,24 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
     /// Checks `y² = x³ + ax + b` using field arithmetic.
     ///
-    /// Uses [`Unreduced`] for intermediate results (fewer cycles) and checks
-    /// canonicality only for the final comparison.
+    /// Uses [`Unreduced`] for intermediate results and checks canonicality only for the final
+    /// comparison.
+    #[must_use]
     pub fn is_on_curve(&self) -> bool {
-        let Some((x, y)) = self.xy() else {
+        let Some([x, y]) = self.inner.as_u32s() else {
             return true; // identity is on every curve
         };
-        let (x, y) = (Unreduced::new(x), Unreduced::new(y));
+        // zero-copy cast: &[u32; N] -> &BigInt<N> -> &Unreduced<_, N>
+        let x = Unreduced::wrap_ref(BigInt::wrap_ref(x));
+        let y = Unreduced::wrap_ref(BigInt::wrap_ref(y));
 
-        let lhs = &y * &y;
+        let lhs = y * y;
 
-        let mut rhs = &x * &x;
+        let mut rhs = x * x;
         if !C::COEFF_A.is_zero() {
             rhs += &C::COEFF_A;
         }
-        rhs *= &x;
+        rhs *= x;
         rhs += &C::COEFF_B;
 
         lhs.check() == rhs.check()
@@ -137,9 +142,10 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
     /// Returns `true` if this point is in the prime-order subgroup.
     ///
-    /// For curves with cofactor 1 this always returns `true`. For curves with a
-    /// cofactor (e.g. BLS12-381) this checks `[order] * P == O`.
+    /// For curves with cofactor 1 this always returns `true`. For curves with a cofactor
+    /// (e.g. BLS12-381) this checks `[order]P == O`.
     #[inline]
+    #[must_use]
     pub fn is_in_correct_subgroup(&self) -> bool {
         C::is_in_correct_subgroup(self)
     }
@@ -166,7 +172,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
         self.add_into(a, &Self::new_unchecked(x, -&y));
     }
 
-    /// Computes `self = [scalar] * a` (scalar multiplication).
+    /// Computes `self = [scalar]a` (scalar multiplication).
     #[inline]
     pub fn mul_into(&mut self, a: &Self, scalar: &ScalarField<C, N>) {
         a.inner.mul(scalar.as_limbs(), &mut self.inner);
@@ -185,7 +191,7 @@ impl<C: SWCurveConfig<N>, const N: usize> core::fmt::Debug for AffinePoint<C, N>
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BigInt, R0FieldConfig, field::Fp256};
+    use crate::{R0FieldConfig, field::Fp256};
 
     // --- Toy curve: y² = x³ + x + 1 over F_7, order 5 ---
     //
@@ -240,13 +246,13 @@ mod tests {
         assert!(!g.is_identity());
         assert!(o.is_identity());
 
-        // All curve points are accepted
+        // all curve points are accepted
         assert!(Affine::new(Fq::from_u32(0), Fq::from_u32(1)).is_some());
         assert!(Affine::new(Fq::from_u32(2), Fq::from_u32(5)).is_some());
         assert!(Affine::new(Fq::from_u32(2), Fq::from_u32(2)).is_some());
         assert!(Affine::new(Fq::from_u32(0), Fq::from_u32(6)).is_some());
 
-        // Off-curve point is rejected
+        // off-curve point is rejected
         assert!(Affine::new(Fq::from_u32(1), Fq::from_u32(1)).is_none());
     }
 
@@ -255,21 +261,21 @@ mod tests {
         let g = Affine::GENERATOR;
         let o = Affine::IDENTITY;
 
-        // Identity
+        // identity
         assert_eq!(&g + &o, g);
         assert_eq!(&o + &g, g);
         assert_eq!(&g - &o, g);
         assert!((&g - &g).is_identity());
 
-        // Doubling
+        // doubling
         let mut two_g = Affine::IDENTITY;
         two_g.double_into(&g);
         assert_eq!(&g + &g, two_g);
 
-        // Commutativity
+        // commutativity
         assert_eq!(&g + &two_g, &two_g + &g);
 
-        // Walk the full group: G, 2G, 3G, 4G, 5G=O
+        // walk the full group: G, 2G, 3G, 4G, 5G=O
         assert_eq!(two_g, pt(2, 5)); // 2G
         assert_eq!(&g + &two_g, pt(2, 2)); // 3G
         assert_eq!(&two_g + &two_g, pt(0, 6)); // 4G

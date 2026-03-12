@@ -4,9 +4,11 @@
 //! `risc0_bigint2` unchecked field operations.
 //!
 //! Swapping to a different backend (e.g. Montgomery-form host, different zkVM) means replacing this
-//! module — the rest of the crate is backend-agnostic.
+//! module - the rest of the crate is backend-agnostic.
 
+use super::Uf;
 use crate::{BigInt, Fp, FpConfig, R0FieldConfig};
+use bytemuck::TransparentWrapper;
 use risc0_bigint2::field::unchecked::{
     modadd_256, modadd_384, modinv_256, modinv_384, modmul_256, modmul_384, modsub_256, modsub_384,
 };
@@ -18,29 +20,29 @@ use risc0_bigint2::field::unchecked::{
 /// # Safety
 ///
 /// For every method:
-/// * `a` and `b` must point to readable, aligned memory for `Self`.
+/// * `a` must point to readable, aligned memory for `Self`.
 /// * `out` must point to writeable, aligned memory for `Self`.
-/// * `out` need not be initialized — the implementation writes all limbs.
-/// * `out` may alias `a` or `b` — the FFI reads all inputs before writing.
+/// * `out` need not be initialized - the implementation writes all limbs.
+/// * `out` may alias `a` - the FFI reads all inputs before writing.
 trait FieldOps {
-    unsafe fn add(a: *const Self, b: *const Self, m: &Self, out: *mut Self);
-    unsafe fn sub(a: *const Self, b: *const Self, m: &Self, out: *mut Self);
-    unsafe fn mul(a: *const Self, b: *const Self, m: &Self, out: *mut Self);
+    unsafe fn add(a: *const Self, b: &Self, m: &Self, out: *mut Self);
+    unsafe fn sub(a: *const Self, b: &Self, m: &Self, out: *mut Self);
+    unsafe fn mul(a: *const Self, b: &Self, m: &Self, out: *mut Self);
     unsafe fn inv(a: *const Self, m: &Self, out: *mut Self);
 }
 
 impl FieldOps for BigInt<8> {
     #[inline]
-    unsafe fn add(a: *const Self, b: *const Self, m: &Self, out: *mut Self) {
-        unsafe { modadd_256(&(*a).0, &(*b).0, &m.0, &mut (*out).0) }
+    unsafe fn add(a: *const Self, b: &Self, m: &Self, out: *mut Self) {
+        unsafe { modadd_256(&(*a).0, &b.0, &m.0, &mut (*out).0) }
     }
     #[inline]
-    unsafe fn sub(a: *const Self, b: *const Self, m: &Self, out: *mut Self) {
-        unsafe { modsub_256(&(*a).0, &(*b).0, &m.0, &mut (*out).0) }
+    unsafe fn sub(a: *const Self, b: &Self, m: &Self, out: *mut Self) {
+        unsafe { modsub_256(&(*a).0, &b.0, &m.0, &mut (*out).0) }
     }
     #[inline]
-    unsafe fn mul(a: *const Self, b: *const Self, m: &Self, out: *mut Self) {
-        unsafe { modmul_256(&(*a).0, &(*b).0, &m.0, &mut (*out).0) }
+    unsafe fn mul(a: *const Self, b: &Self, m: &Self, out: *mut Self) {
+        unsafe { modmul_256(&(*a).0, &b.0, &m.0, &mut (*out).0) }
     }
     #[inline]
     unsafe fn inv(a: *const Self, m: &Self, out: *mut Self) {
@@ -50,16 +52,16 @@ impl FieldOps for BigInt<8> {
 
 impl FieldOps for BigInt<12> {
     #[inline]
-    unsafe fn add(a: *const Self, b: *const Self, m: &Self, out: *mut Self) {
-        unsafe { modadd_384(&(*a).0, &(*b).0, &m.0, &mut (*out).0) }
+    unsafe fn add(a: *const Self, b: &Self, m: &Self, out: *mut Self) {
+        unsafe { modadd_384(&(*a).0, &b.0, &m.0, &mut (*out).0) }
     }
     #[inline]
-    unsafe fn sub(a: *const Self, b: *const Self, m: &Self, out: *mut Self) {
-        unsafe { modsub_384(&(*a).0, &(*b).0, &m.0, &mut (*out).0) }
+    unsafe fn sub(a: *const Self, b: &Self, m: &Self, out: *mut Self) {
+        unsafe { modsub_384(&(*a).0, &b.0, &m.0, &mut (*out).0) }
     }
     #[inline]
-    unsafe fn mul(a: *const Self, b: *const Self, m: &Self, out: *mut Self) {
-        unsafe { modmul_384(&(*a).0, &(*b).0, &m.0, &mut (*out).0) }
+    unsafe fn mul(a: *const Self, b: &Self, m: &Self, out: *mut Self) {
+        unsafe { modmul_384(&(*a).0, &b.0, &m.0, &mut (*out).0) }
     }
     #[inline]
     unsafe fn inv(a: *const Self, m: &Self, out: *mut Self) {
@@ -68,12 +70,22 @@ impl FieldOps for BigInt<12> {
 }
 
 // ---------------------------------------------------------------------------
-// Blanket: FieldConfig + FieldOps → PrimeFieldConfig
+// Blanket: FieldConfig + FieldOps -> PrimeFieldConfig
 //
 // This is the only place in the crate that knows about the R0VM backend.
 // Replacing this blanket impl (and the FieldOps impls above) is all that's
 // needed to retarget to a different backend.
 // ---------------------------------------------------------------------------
+
+/// Mutable pointer cast guarded by [`TransparentWrapper`].
+const fn cast_ptr_mut<T: TransparentWrapper<Inner>, Inner>(ptr: *mut T) -> *mut Inner {
+    ptr.cast()
+}
+
+/// Const pointer cast guarded by [`TransparentWrapper`].
+const fn cast_ptr<T: TransparentWrapper<Inner>, Inner>(ptr: *const T) -> *const Inner {
+    ptr.cast()
+}
 
 impl<P: R0FieldConfig<N>, const N: usize> FpConfig<N> for P
 where
@@ -83,23 +95,28 @@ where
     const ONE: Fp<Self, N> = <Self as R0FieldConfig<N>>::ONE;
 
     #[inline]
-    unsafe fn fp_add(a: &Fp<Self, N>, b: &Fp<Self, N>, out: *mut Fp<Self, N>) {
-        unsafe { FieldOps::add(a.as_raw(), b.as_raw(), &Self::MODULUS, out.cast()) }
+    unsafe fn fp_add(a: *const Uf<Self, N>, b: &Uf<Self, N>, out: *mut Uf<Self, N>) {
+        unsafe { FieldOps::add(cast_ptr(a), b.as_bigint(), &Self::MODULUS, cast_ptr_mut(out)) }
     }
 
     #[inline]
-    unsafe fn fp_sub(a: &Fp<Self, N>, b: &Fp<Self, N>, out: *mut Fp<Self, N>) {
-        unsafe { FieldOps::sub(a.as_raw(), b.as_raw(), &Self::MODULUS, out.cast()) }
+    unsafe fn fp_sub(a: *const Uf<Self, N>, b: &Uf<Self, N>, out: *mut Uf<Self, N>) {
+        unsafe { FieldOps::sub(cast_ptr(a), b.as_bigint(), &Self::MODULUS, cast_ptr_mut(out)) }
     }
 
     #[inline]
-    unsafe fn fp_mul(a: &Fp<Self, N>, b: &Fp<Self, N>, out: *mut Fp<Self, N>) {
-        unsafe { FieldOps::mul(a.as_raw(), b.as_raw(), &Self::MODULUS, out.cast()) }
+    unsafe fn fp_mul(a: *const Uf<Self, N>, b: &Uf<Self, N>, out: *mut Uf<Self, N>) {
+        unsafe { FieldOps::mul(cast_ptr(a), b.as_bigint(), &Self::MODULUS, cast_ptr_mut(out)) }
     }
 
     #[inline]
-    unsafe fn fp_inv(a: &Fp<Self, N>, out: *mut Fp<Self, N>) {
-        unsafe { FieldOps::inv(a.as_raw(), &Self::MODULUS, out.cast()) }
+    unsafe fn fp_neg(a: &Uf<Self, N>, out: *mut Uf<Self, N>) {
+        unsafe { FieldOps::sub(&BigInt::ZERO, a.as_bigint(), &Self::MODULUS, cast_ptr_mut(out)) }
+    }
+
+    #[inline]
+    unsafe fn fp_inv(a: &Uf<Self, N>, out: *mut Uf<Self, N>) {
+        unsafe { FieldOps::inv(a.as_bigint(), &Self::MODULUS, cast_ptr_mut(out)) }
     }
 }
 
@@ -114,41 +131,23 @@ mod tests {
 
     #[test]
     fn add_aliasing() {
-        let expected = BigInt::from_u32(1); // (3 + 5) mod 7
-
         let mut a = A;
-        unsafe { FieldOps::add(ptr::from_ref(&a), ptr::from_ref(&B), &M, ptr::from_mut(&mut a)) };
-        assert_eq!(a, expected);
-
-        let mut b = B;
-        unsafe { FieldOps::add(ptr::from_ref(&A), ptr::from_ref(&b), &M, ptr::from_mut(&mut b)) };
-        assert_eq!(b, expected);
+        unsafe { FieldOps::add(ptr::from_ref(&a), &B, &M, ptr::from_mut(&mut a)) };
+        assert_eq!(a, BigInt::from_u32(1)); // (3 + 5) mod 7
     }
 
     #[test]
     fn sub_aliasing() {
-        let expected = BigInt::from_u32(5); // (3 - 5) mod 7
-
         let mut a = A;
-        unsafe { FieldOps::sub(ptr::from_ref(&a), ptr::from_ref(&B), &M, ptr::from_mut(&mut a)) };
-        assert_eq!(a, expected);
-
-        let mut b = B;
-        unsafe { FieldOps::sub(ptr::from_ref(&A), ptr::from_ref(&b), &M, ptr::from_mut(&mut b)) };
-        assert_eq!(b, expected);
+        unsafe { FieldOps::sub(ptr::from_ref(&a), &B, &M, ptr::from_mut(&mut a)) };
+        assert_eq!(a, BigInt::from_u32(5)); // (3 - 5) mod 7
     }
 
     #[test]
     fn mul_aliasing() {
-        let expected = BigInt::from_u32(1); // (3 * 5) mod 7
-
         let mut a = A;
-        unsafe { FieldOps::mul(ptr::from_ref(&a), ptr::from_ref(&B), &M, ptr::from_mut(&mut a)) };
-        assert_eq!(a, expected);
-
-        let mut b = B;
-        unsafe { FieldOps::mul(ptr::from_ref(&A), ptr::from_ref(&b), &M, ptr::from_mut(&mut b)) };
-        assert_eq!(b, expected);
+        unsafe { FieldOps::mul(ptr::from_ref(&a), &B, &M, ptr::from_mut(&mut a)) };
+        assert_eq!(a, BigInt::from_u32(1)); // (3 * 5) mod 7
     }
 
     #[test]

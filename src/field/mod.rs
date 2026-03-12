@@ -1,14 +1,18 @@
 pub(crate) mod ops;
 mod unreduced;
 
-pub use unreduced::Unreduced;
-
 use crate::BigInt;
 use core::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
     ptr,
 };
 
+pub use unreduced::Unreduced;
+
+/// Shorthand for [`Unreduced`] in pointer-heavy signatures.
+type Uf<P, const N: usize> = Unreduced<P, N>;
+
+/// Defines a prime field by its modulus. Implement this trait to introduce a new field.
 pub trait R0FieldConfig<const N: usize>: Send + Sync + 'static + Sized {
     /// The field modulus `p`.
     const MODULUS: BigInt<N>;
@@ -17,14 +21,15 @@ pub trait R0FieldConfig<const N: usize>: Send + Sync + 'static + Sized {
     const ONE: Fp<Self, N> = Fp::from_bigint_unchecked(BigInt::ONE);
 }
 
-/// A fully configured prime field with hardware-accelerated arithmetic.
+/// A prime field with arithmetic operations. Provided by a blanket impl over [`R0FieldConfig`].
 ///
-/// # Safety (for the blanket impl)
+/// # Safety
 ///
 /// The `fp_*` methods have the following contract:
-/// * `out` must point to writeable, aligned memory for `Fp<Self, N>`.
-/// * `out` need not be initialized — the implementation writes all limbs.
-/// * `out` may alias `a` or `b` — the implementation reads all inputs before writing.
+/// * `out` must point to writeable, aligned memory for `Unreduced<Self, N>`.
+/// * `out` need not be initialized - the implementation writes all limbs.
+/// * `out` may alias `a` - the implementation reads all inputs before writing.
+/// * Results need not be reduced to `[0, p)`.
 pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
     /// The field modulus `p`.
     const MODULUS: BigInt<N>;
@@ -35,24 +40,37 @@ pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
     /// Multiplicative identity of the field.
     const ONE: Fp<Self, N>;
 
-    #[doc(hidden)]
-    unsafe fn fp_add(a: &Fp<Self, N>, b: &Fp<Self, N>, out: *mut Fp<Self, N>);
-    #[doc(hidden)]
-    unsafe fn fp_sub(a: &Fp<Self, N>, b: &Fp<Self, N>, out: *mut Fp<Self, N>);
-    #[doc(hidden)]
-    unsafe fn fp_mul(a: &Fp<Self, N>, b: &Fp<Self, N>, out: *mut Fp<Self, N>);
-    #[doc(hidden)]
-    unsafe fn fp_inv(a: &Fp<Self, N>, out: *mut Fp<Self, N>);
+    /// Computes `a + b mod p`.
+    /// # Safety
+    /// See [trait-level docs](Self).
+    unsafe fn fp_add(a: *const Uf<Self, N>, b: &Uf<Self, N>, out: *mut Uf<Self, N>);
+    /// Computes `a - b mod p`.
+    /// # Safety
+    /// See [trait-level docs](Self).
+    unsafe fn fp_sub(a: *const Uf<Self, N>, b: &Uf<Self, N>, out: *mut Uf<Self, N>);
+    /// Computes `a * b mod p`.
+    /// # Safety
+    /// See [trait-level docs](Self).
+    unsafe fn fp_mul(a: *const Uf<Self, N>, b: &Uf<Self, N>, out: *mut Uf<Self, N>);
+    /// Computes `-a mod p`.
+    /// # Safety
+    /// See [trait-level docs](Self).
+    unsafe fn fp_neg(a: &Uf<Self, N>, out: *mut Uf<Self, N>);
+    /// Computes `a⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
+    /// # Safety
+    /// See [trait-level docs](Self).
+    unsafe fn fp_inv(a: &Uf<Self, N>, out: *mut Uf<Self, N>);
 }
 
 /// An element of the prime field defined by [`P::MODULUS`](FpConfig::MODULUS).
 ///
 /// Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`.
-/// For performance-sensitive chains of arithmetic, use [`Unreduced`] which defers
-/// the canonicality check until you call [`.check()`](Unreduced::check).
+/// For performance-sensitive chains of arithmetic, use [`Unreduced`] which defers the canonicality
+/// check until you call [`.check()`](Unreduced::check).
 #[repr(transparent)]
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, PartialEq, Eq, Hash)]
+#[must_use]
 pub struct Fp<P, const N: usize> {
     inner: BigInt<N>,
     _marker: core::marker::PhantomData<P>,
@@ -68,7 +86,7 @@ pub type Fp256<P> = Fp<P, 8>;
 pub type Fp384<P> = Fp<P, 12>;
 
 // ---------------------------------------------------------------------------
-// Pure accessors — no arithmetic, no bounds.
+// Pure accessors - no arithmetic, no bounds.
 // ---------------------------------------------------------------------------
 
 impl<P, const N: usize> Fp<P, N> {
@@ -78,11 +96,13 @@ impl<P, const N: usize> Fp<P, N> {
         Self { inner: b, _marker: core::marker::PhantomData }
     }
 
+    /// Returns a reference to the underlying [`BigInt`].
     #[inline]
     pub const fn as_bigint(&self) -> &BigInt<N> {
         &self.inner
     }
 
+    /// Returns the underlying [`BigInt`] by value.
     #[inline]
     pub const fn to_bigint(self) -> BigInt<N> {
         self.inner
@@ -94,6 +114,7 @@ impl<P, const N: usize> Fp<P, N> {
         &self.inner.0
     }
 
+    /// Returns the underlying limb array by value.
     #[inline]
     pub const fn to_limbs(self) -> [u32; N] {
         self.inner.0
@@ -102,21 +123,29 @@ impl<P, const N: usize> Fp<P, N> {
     /// Reinterprets this field element as an [`Unreduced`] (zero-cost).
     #[inline]
     pub const fn as_unreduced(&self) -> &Unreduced<P, N> {
+        const { assert!(size_of::<Self>() == size_of::<Unreduced<P, N>>()) };
+        const { assert!(align_of::<Self>() == align_of::<Unreduced<P, N>>()) };
+        // SAFETY: Unreduced is #[repr(transparent)] over Fp; size/align checked above.
         unsafe { &*ptr::from_ref(self).cast() }
     }
 
-    /// Transparent pointer cast from `&Fp<P, N>` to `*const BigInt<N>`.
+    /// Reinterprets this field element as `&mut Unreduced` (zero-cost).
     ///
-    /// Sound because `Fp` is `#[repr(transparent)]` over `BigInt<N>`.
-    /// Used by [`FpOps`] default methods to bridge into [`FieldOps`](ops::FieldOps).
+    /// # Safety
+    ///
+    /// The caller must restore the `< p` invariant before using `self` as `Fp` again
+    /// (e.g. via `assert!(self.is_valid())`).
     #[inline]
-    const fn as_raw(&self) -> *const BigInt<N> {
-        ptr::from_ref(self).cast()
+    unsafe fn as_unreduced_mut(&mut self) -> &mut Unreduced<P, N> {
+        const { assert!(size_of::<Self>() == size_of::<Unreduced<P, N>>()) };
+        const { assert!(align_of::<Self>() == align_of::<Unreduced<P, N>>()) };
+        // SAFETY: Unreduced is #[repr(transparent)] over Fp; size/align checked above.
+        unsafe { &mut *ptr::from_mut(self).cast() }
     }
 }
 
 // ---------------------------------------------------------------------------
-// Arithmetic — requires `P: PrimeFieldConfig<N>`.
+// Arithmetic - requires `P: FpConfig<N>`.
 // ---------------------------------------------------------------------------
 
 impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
@@ -168,12 +197,13 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
         }
     }
 
+    /// Reduces `self` in-place to its canonical representative in `[0, p)`.
     #[inline(always)]
     pub fn reduce_in_place(&mut self) {
         if self.is_valid() {
             return;
         }
-        // If MSB of modulus is set, 2p overflows N limbs, so a >= p implies a ∈ [p, 2p).
+        // If MSB of modulus is set, 2p overflows N limbs, so a >= p implies a in [p, 2p).
         if P::MODULUS.msb_set() {
             self.inner -= &P::MODULUS;
             return;
@@ -183,15 +213,13 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     }
 
     /// Returns `self` reduced to its canonical representative in `[0, p)`.
-    #[must_use]
     #[inline]
     pub fn reduced(mut self) -> Self {
         self.reduce_in_place();
         self
     }
 
-    /// Computes `self⁻¹ mod p`. Panics in debug builds if `self` is zero.
-    #[must_use]
+    /// Computes `self⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
     #[inline]
     pub fn inverse(&self) -> Self {
         self.as_unreduced().inverse().check()
@@ -199,7 +227,7 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
 
     /// Creates a field element from a big-endian byte slice, reducing modulo `p`.
     ///
-    /// When the input fits in `N * 4` bytes and is already `< p`, no syscalls are issued.
+    /// When the input fits in `N * 4` bytes and is already `< p`, no arithmetic is performed.
     #[inline]
     pub fn from_be_bytes_mod_order(bytes: &[u8]) -> Self {
         if bytes.len() <= N * 4 {
@@ -220,7 +248,7 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
 
     /// Creates a field element from a little-endian byte slice, reducing modulo `p`.
     ///
-    /// When the input fits in `N * 4` bytes and is already `< p`, no syscalls are issued.
+    /// When the input fits in `N * 4` bytes and is already `< p`, no arithmetic is performed.
     #[cfg(target_endian = "little")]
     #[inline]
     pub fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
@@ -239,35 +267,10 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
         }
         result.check()
     }
-
-    // -----------------------------------------------------------------------
-    // Crate-internal unchecked entry points for Unreduced.
-    // -----------------------------------------------------------------------
-
-    #[inline]
-    unsafe fn add_into(a: &Self, b: &Self, out: *mut Self) {
-        unsafe { P::fp_add(a, b, out) }
-    }
-    #[inline]
-    unsafe fn sub_into(a: &Self, b: &Self, out: *mut Self) {
-        unsafe { P::fp_sub(a, b, out) }
-    }
-    #[inline]
-    unsafe fn mul_into(a: &Self, b: &Self, out: *mut Self) {
-        unsafe { P::fp_mul(a, b, out) }
-    }
-    #[inline]
-    unsafe fn neg_into(a: &Self, out: *mut Self) {
-        unsafe { P::fp_sub(&Self::ZERO, a, out) }
-    }
-    #[inline]
-    unsafe fn inv_into(a: &Self, out: *mut Self) {
-        unsafe { P::fp_inv(a, out) }
-    }
 }
 
 // ---------------------------------------------------------------------------
-// Operator overloads — checked (canonical output).
+// Operator overloads - checked (canonical output).
 //
 // All reference-based to avoid 32-byte / 48-byte copies on R0VM
 // ---------------------------------------------------------------------------
@@ -309,14 +312,14 @@ impl<P: FpConfig<N>, const N: usize> Neg for &Fp<P, N> {
 }
 
 // ---------------------------------------------------------------------------
-// Assign operators — checked, in-place (aliased input/output, zero copies).
+// Assign operators - checked, in-place (aliased input/output, zero copies).
 // ---------------------------------------------------------------------------
 
 impl<P: FpConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
     #[inline]
     fn add_assign(&mut self, rhs: &Self) {
-        let ptr = ptr::from_mut(self);
-        unsafe { P::fp_add(&*ptr, rhs, ptr) };
+        // SAFETY: is_valid() restores the Fp invariant.
+        unsafe { *self.as_unreduced_mut() += rhs.as_unreduced() };
         assert!(self.is_valid());
     }
 }
@@ -324,8 +327,8 @@ impl<P: FpConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
 impl<P: FpConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
     #[inline]
     fn sub_assign(&mut self, rhs: &Self) {
-        let ptr = ptr::from_mut(self);
-        unsafe { P::fp_sub(&*ptr, rhs, ptr) };
+        // SAFETY: is_valid() restores the Fp invariant.
+        unsafe { *self.as_unreduced_mut() -= rhs.as_unreduced() };
         assert!(self.is_valid());
     }
 }
@@ -333,8 +336,8 @@ impl<P: FpConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
 impl<P: FpConfig<N>, const N: usize> MulAssign<&Self> for Fp<P, N> {
     #[inline]
     fn mul_assign(&mut self, rhs: &Self) {
-        let ptr = ptr::from_mut(self);
-        unsafe { P::fp_mul(&*ptr, rhs, ptr) };
+        // SAFETY: is_valid() restores the Fp invariant.
+        unsafe { *self.as_unreduced_mut() *= rhs.as_unreduced() };
         assert!(self.is_valid());
     }
 }
@@ -364,23 +367,23 @@ mod tests {
     fn field_axioms() {
         let (a, b, c) = (F::from_u32(3), F::from_u32(5), F::from_u32(2));
 
-        // Commutativity
+        // commutativity
         assert_eq!(&a + &b, &b + &a);
         assert_eq!(&a * &b, &b * &a);
 
-        // Associativity
+        // associativity
         assert_eq!(&(&a + &b) + &c, &a + &(&b + &c));
         assert_eq!(&(&a * &b) * &c, &a * &(&b * &c));
 
-        // Identity
+        // identity
         assert_eq!(&a + &F::ZERO, a);
         assert_eq!(&a * &F::ONE, a);
 
-        // Inverse
+        // inverse
         assert_eq!(&a + &(-&a), F::ZERO);
         assert_eq!(&a * &a.inverse(), F::ONE);
 
-        // Distributivity
+        // distributivity
         assert_eq!(&a * &(&b + &c), &(&a * &b) + &(&a * &c));
     }
 

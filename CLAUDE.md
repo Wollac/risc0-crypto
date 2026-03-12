@@ -62,10 +62,14 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 
 ## Style
 
-- Max line width is 100 (code and comments)
+- Max line width is 100 (code and comments). Wrap comments and docs as close to 100 as possible - do not leave short lines when text could fill the line
 - Comments: lowercase start unless a full sentence; prefer short bullet-point style over prose
 - No blank lines between `use` statements
 - See `rustfmt.toml` for formatting config
+- Math notation in comments/docs:
+  - Unicode superscripts for exponentiation: `y² = x³`, `self⁻¹ mod p`
+  - Bracket notation for scalar multiplication, no `*`: `[k]P`, `[order]P == O`
+  - ASCII for prose operators: `in`, `->`, `>=` (not `∈`, `→`, `≥`)
 
 ## Adding a New Curve
 

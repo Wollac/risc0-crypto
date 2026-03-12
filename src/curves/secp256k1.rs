@@ -37,7 +37,7 @@ impl SWCurveConfig<8> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
 
-    // Curve equation: y^2 = x^3 + 7
+    // curve equation: y² = x³ + 7
     const COEFF_A: Fq = Fq::ZERO;
     const COEFF_B: Fq = fp!("0x7");
 

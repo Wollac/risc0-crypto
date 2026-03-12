@@ -4,6 +4,7 @@
 //! - Base field: 381-bit
 //! - Cofactor: `0x396c8c005555e1568c00aaab0000aaab`
 //! - Spec: <https://datatracker.ietf.org/doc/draft-irtf-cfrg-pairing-friendly-curves/>
+
 use crate::{AffinePoint, BigInt, Fp, R0FieldConfig, SWCurveConfig, bigint, fp};
 
 // --- Base field (Fq): coordinates, modulus = q (381 bits) ---
@@ -37,7 +38,7 @@ impl SWCurveConfig<12> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
 
-    // G1 curve equation: y^2 = x^3 + 4
+    // G1 curve equation: y² = x³ + 4
     const COEFF_A: Fq = Fq::ZERO;
     const COEFF_B: Fq = fp!("0x4");
 

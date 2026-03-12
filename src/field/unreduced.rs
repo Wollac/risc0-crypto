@@ -1,54 +1,77 @@
 use crate::{BigInt, Fp, FpConfig};
 use core::{
     mem::MaybeUninit,
-    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
     ptr,
 };
 
 /// A field element that may not be in canonical form `[0, p)`.
 ///
-/// All arithmetic uses unchecked operations (fewer cycles on R0VM) that skip
-/// the `assert!(result < p)` check. Convert back to [`Fp`] via
-/// [`.check()`](Self::check) to assert canonicality, or use
-/// [`.reduce()`](Self::reduce) to force reduction.
+/// Arithmetic on `Unreduced` skips the `assert!(result < p)` canonicality check that [`Fp`]
+/// performs after every operation. Convert back to [`Fp`] via [`.check()`](Self::check) to
+/// assert canonicality, or [`.reduce()`](Self::reduce) to force reduction.
 #[repr(transparent)]
 #[derive(educe::Educe)]
 #[educe(Copy, Clone)]
+#[must_use]
 pub struct Unreduced<P, const N: usize>(Fp<P, N>);
+
+// SAFETY: Unreduced is #[repr(transparent)] over Fp, which is #[repr(transparent)] over BigInt.
+// The only other field (PhantomData<P> inside Fp) is a ZST.
+unsafe impl<P, const N: usize> bytemuck::TransparentWrapper<BigInt<N>> for Unreduced<P, N> {}
 
 impl<P, const N: usize> core::fmt::Debug for Unreduced<P, N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("Unreduced").field(self.0.as_bigint()).finish()
+        f.debug_tuple("Unreduced").field(self.as_bigint()).finish()
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
-    #[inline]
-    pub const fn from_bigint(b: BigInt<N>) -> Self {
-        Self(Fp::from_bigint_unchecked(b))
-    }
-
-    /// Wraps a field element for unchecked arithmetic.
+impl<P, const N: usize> Unreduced<P, N> {
+    /// Wraps a canonical [`Fp`] for unchecked arithmetic.
     #[inline]
     pub const fn new(fp: Fp<P, N>) -> Self {
         Self(fp)
     }
 
-    /// Returns `true` if this element is zero modulo `p`.
+    /// Creates an `Unreduced` from a raw [`BigInt`].
+    #[inline]
+    pub const fn from_bigint(b: BigInt<N>) -> Self {
+        Self(Fp::from_bigint_unchecked(b))
+    }
+
+    /// Returns a reference to the underlying [`BigInt`].
+    #[inline]
+    pub const fn as_bigint(&self) -> &BigInt<N> {
+        &self.0.inner
+    }
+
+    /// Returns a mutable reference to the underlying [`BigInt`].
+    #[inline]
+    pub const fn as_bigint_mut(&mut self) -> &mut BigInt<N> {
+        &mut self.0.inner
+    }
+}
+
+impl<P, const N: usize> From<Fp<P, N>> for Unreduced<P, N> {
+    #[inline]
+    fn from(fp: Fp<P, N>) -> Self {
+        Self(fp)
+    }
+}
+
+impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
+    /// Returns `true` if this element represents the field zero.
     #[inline]
     pub fn is_zero(&self) -> bool {
         if P::MODULUS.msb_set() {
             // Only 0 and p fit in N limbs.
-            self.0.is_zero() || self.0.inner.const_eq(&P::MODULUS)
+            self.0.is_zero() || self.0.as_bigint().const_eq(&P::MODULUS)
         } else {
             self.reduce().is_zero()
         }
     }
 
-    /// Asserts the value is in `[0, p)` and returns the inner [`Fp`].
-    ///
-    /// This is an honest-prover check — `risc0-bigint2` unchecked ops always return
-    /// canonical results for honest provers. The assert catches dishonest provers.
+    /// Asserts the value is in `[0, p)` and returns the inner [`Fp`]. Panics otherwise.
     #[inline]
     pub fn check(self) -> Fp<P, N> {
         assert!(self.0.is_valid());
@@ -57,35 +80,28 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
 
     /// Forces reduction to `[0, p)` and returns the inner [`Fp`].
     ///
-    /// Prefer [`.check()`](Self::check) when possible — `.reduce()` silently masks
-    /// dishonest-prover misbehavior instead of catching it.
+    /// Prefer [`.check()`](Self::check) when possible: `.reduce()` silently fixes non-canonical
+    /// values instead of catching them.
     #[inline]
     pub fn reduce(self) -> Fp<P, N> {
         self.0.reduced()
     }
 
-    /// Unchecked modular inverse. Panics in debug builds if `self` is zero.
-    #[must_use]
+    /// Computes `self⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
     #[inline]
     pub fn inverse(&self) -> Self {
         debug_assert!(!self.is_zero(), "inverse does not exist for zero");
+        // SAFETY: out is fully written by fp_inv before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
-            Fp::inv_into(&self.0, out.as_mut_ptr());
-            Self(out.assume_init())
+            P::fp_inv(self, out.as_mut_ptr());
+            out.assume_init()
         }
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> From<Fp<P, N>> for Unreduced<P, N> {
-    #[inline]
-    fn from(fp: Fp<P, N>) -> Self {
-        Self(fp)
-    }
-}
-
 // ---------------------------------------------------------------------------
-// Operator overloads — unchecked (no canonicality assert).
+// Operator overloads - unchecked (no canonicality assert).
 //
 // All take `&self` / `&rhs` to avoid 32-byte copies on rv32im.
 // ---------------------------------------------------------------------------
@@ -95,10 +111,11 @@ impl<P: FpConfig<N>, const N: usize> Add for &Unreduced<P, N> {
 
     #[inline]
     fn add(self, rhs: Self) -> Unreduced<P, N> {
+        // SAFETY: out is fully written by fp_add before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
-            Fp::add_into(&self.0, &rhs.0, out.as_mut_ptr());
-            Unreduced(out.assume_init())
+            P::fp_add(self, rhs, out.as_mut_ptr());
+            out.assume_init()
         }
     }
 }
@@ -108,10 +125,11 @@ impl<P: FpConfig<N>, const N: usize> Sub for &Unreduced<P, N> {
 
     #[inline]
     fn sub(self, rhs: Self) -> Unreduced<P, N> {
+        // SAFETY: out is fully written by fp_sub before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
-            Fp::sub_into(&self.0, &rhs.0, out.as_mut_ptr());
-            Unreduced(out.assume_init())
+            P::fp_sub(self, rhs, out.as_mut_ptr());
+            out.assume_init()
         }
     }
 }
@@ -121,10 +139,11 @@ impl<P: FpConfig<N>, const N: usize> Mul for &Unreduced<P, N> {
 
     #[inline]
     fn mul(self, rhs: Self) -> Unreduced<P, N> {
+        // SAFETY: out is fully written by fp_mul before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
-            Fp::mul_into(&self.0, &rhs.0, out.as_mut_ptr());
-            Unreduced(out.assume_init())
+            P::fp_mul(self, rhs, out.as_mut_ptr());
+            out.assume_init()
         }
     }
 }
@@ -134,10 +153,11 @@ impl<P: FpConfig<N>, const N: usize> Neg for &Unreduced<P, N> {
 
     #[inline]
     fn neg(self) -> Unreduced<P, N> {
+        // SAFETY: out is fully written by fp_neg before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
-            Fp::neg_into(&self.0, out.as_mut_ptr());
-            Unreduced(out.assume_init())
+            P::fp_neg(self, out.as_mut_ptr());
+            out.assume_init()
         }
     }
 }
@@ -145,35 +165,60 @@ impl<P: FpConfig<N>, const N: usize> Neg for &Unreduced<P, N> {
 impl<P: FpConfig<N>, const N: usize> AddAssign<&Self> for Unreduced<P, N> {
     #[inline]
     fn add_assign(&mut self, rhs: &Self) {
-        let ptr = ptr::from_mut(&mut self.0);
-        // SAFETY: ptr aliases self as both input and output; the FFI reads before writing.
-        unsafe { Fp::add_into(&*ptr, &rhs.0, ptr) };
+        let ptr = ptr::from_mut(self);
+        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
+        unsafe { P::fp_add(ptr, rhs, ptr) };
     }
 }
 
 impl<P: FpConfig<N>, const N: usize> AddAssign<&Fp<P, N>> for Unreduced<P, N> {
     #[inline]
     fn add_assign(&mut self, rhs: &Fp<P, N>) {
-        let ptr = ptr::from_mut(&mut self.0);
-        // SAFETY: ptr aliases self as both input and output; the FFI reads before writing.
-        unsafe { Fp::add_into(&*ptr, rhs, ptr) };
+        let ptr = ptr::from_mut(self);
+        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
+        unsafe { P::fp_add(ptr, rhs.as_unreduced(), ptr) };
+    }
+}
+
+impl<P: FpConfig<N>, const N: usize> SubAssign<&Self> for Unreduced<P, N> {
+    #[inline]
+    fn sub_assign(&mut self, rhs: &Self) {
+        let ptr = ptr::from_mut(self);
+        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
+        unsafe { P::fp_sub(ptr, rhs, ptr) };
     }
 }
 
 impl<P: FpConfig<N>, const N: usize> MulAssign<&Self> for Unreduced<P, N> {
     #[inline]
     fn mul_assign(&mut self, rhs: &Self) {
-        let ptr = ptr::from_mut(&mut self.0);
-        // SAFETY: ptr aliases self as both input and output; the FFI reads before writing.
-        unsafe { Fp::mul_into(&*ptr, &rhs.0, ptr) };
+        let ptr = ptr::from_mut(self);
+        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
+        unsafe { P::fp_mul(ptr, rhs, ptr) };
     }
 }
 
 impl<P: FpConfig<N>, const N: usize> MulAssign<&Fp<P, N>> for Unreduced<P, N> {
     #[inline]
     fn mul_assign(&mut self, rhs: &Fp<P, N>) {
-        let ptr = ptr::from_mut(&mut self.0);
-        // SAFETY: ptr aliases self as both input and output; the FFI reads before writing.
-        unsafe { Fp::mul_into(&*ptr, rhs, ptr) };
+        let ptr = ptr::from_mut(self);
+        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
+        unsafe { P::fp_mul(ptr, rhs.as_unreduced(), ptr) };
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bytemuck::TransparentWrapper;
+
+    /// Exercises the runtime size/align assertions inside `wrap_ref` and `peel_ref`.
+    /// Catches accidental layout changes (e.g. adding a non-ZST field to Unreduced or Fp).
+    #[test]
+    fn transparent_wrapper_layout() {
+        let b = BigInt::<8>::from_u32(42);
+        let u: &Unreduced<crate::curves::secp256k1::FqConfig, 8> = Unreduced::wrap_ref(&b);
+        let roundtrip: &BigInt<8> = Unreduced::peel_ref(u);
+        assert_eq!(*roundtrip, b);
     }
 }
