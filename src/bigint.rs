@@ -254,7 +254,7 @@ impl<const N: usize> From<BigInt<N>> for [u32; N] {
 }
 
 impl<const N: usize> PartialOrd for BigInt<N> {
-    #[inline(always)]
+    #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }

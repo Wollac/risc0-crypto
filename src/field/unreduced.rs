@@ -8,8 +8,8 @@ use core::{
 /// A field element that may not be in canonical form `[0, p)`.
 ///
 /// Arithmetic on `Unreduced` skips the `assert!(result < p)` canonicality check that [`Fp`]
-/// performs after every operation. Convert back to [`Fp`] via [`.check()`](Self::check) to
-/// assert canonicality, or [`.reduce()`](Self::reduce) to force reduction.
+/// performs after every operation. Convert back to [`Fp`] via [`check`](Self::check) to
+/// assert canonicality, or [`reduce`](Self::reduce) to force reduction.
 #[derive(educe::Educe)]
 #[educe(Copy, Clone)]
 #[must_use]
@@ -59,6 +59,20 @@ impl<P, const N: usize> From<Fp<P, N>> for Unreduced<P, N> {
     }
 }
 
+impl<P, const N: usize> AsRef<Self> for Unreduced<P, N> {
+    #[inline]
+    fn as_ref(&self) -> &Self {
+        self
+    }
+}
+
+impl<P, const N: usize> AsRef<Unreduced<P, N>> for Fp<P, N> {
+    #[inline]
+    fn as_ref(&self) -> &Unreduced<P, N> {
+        self.as_unreduced()
+    }
+}
+
 impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
     /// Returns `true` if this element represents the field zero.
     #[inline]
@@ -80,11 +94,32 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
 
     /// Forces reduction to `[0, p)` and returns the inner [`Fp`].
     ///
-    /// Prefer [`.check()`](Self::check) when possible: `.reduce()` silently fixes non-canonical
-    /// values instead of catching them.
+    /// Prefer [`check`](Self::check) when possible: [`reduce`](Self::reduce) silently fixes
+    /// non-canonical values instead of catching them.
     #[inline]
-    pub fn reduce(self) -> Fp<P, N> {
-        self.0.reduced()
+    pub fn reduce(mut self) -> Fp<P, N> {
+        self.reduce_in_place();
+        self.0
+    }
+
+    /// Forces reduction to `[0, p)` in place, returning a reference to the inner [`Fp`].
+    ///
+    /// Prefer [`check`](Self::check) when possible: [`reduce_in_place`](Self::reduce_in_place)
+    /// silently fixes non-canonical values instead of catching them.
+    #[inline(always)]
+    pub fn reduce_in_place(&mut self) -> &Fp<P, N> {
+        if self.0.is_valid() {
+            return &self.0;
+        }
+        // If MSB of modulus is set, 2p overflows N limbs, so a >= p implies a in [p, 2p).
+        if P::MODULUS.msb_set() {
+            self.0.inner -= &P::MODULUS;
+            return &self.0;
+        }
+        // Adding zero forces reduction via the modular-add syscall
+        *self += &P::ZERO;
+        assert!(self.0.is_valid());
+        &self.0
     }
 
     /// Computes `self⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
@@ -101,48 +136,47 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
 }
 
 // ---------------------------------------------------------------------------
-// Operator overloads - unchecked (no canonicality assert).
+// Primitive operator impls.
 //
-// All take `&self` / `&rhs` to avoid 32-byte copies on rv32im.
+// Two performance-critical patterns, each hand-written:
+// - &ref Op &ref: MaybeUninit output, no copies
+// - val OpAssign &ref: aliased input/output pointer, zero allocation
 // ---------------------------------------------------------------------------
 
-impl<P: FpConfig<N>, const N: usize> Add for &Unreduced<P, N> {
+impl<P: FpConfig<N>, const N: usize, T: AsRef<Unreduced<P, N>>> Add<&T> for &Unreduced<P, N> {
     type Output = Unreduced<P, N>;
-
     #[inline]
-    fn add(self, rhs: Self) -> Unreduced<P, N> {
+    fn add(self, rhs: &T) -> Unreduced<P, N> {
         // SAFETY: out is fully written by fp_add before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
-            P::fp_add(self, rhs, out.as_mut_ptr());
+            P::fp_add(self, rhs.as_ref(), out.as_mut_ptr());
             out.assume_init()
         }
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> Sub for &Unreduced<P, N> {
+impl<P: FpConfig<N>, const N: usize, T: AsRef<Unreduced<P, N>>> Sub<&T> for &Unreduced<P, N> {
     type Output = Unreduced<P, N>;
-
     #[inline]
-    fn sub(self, rhs: Self) -> Unreduced<P, N> {
+    fn sub(self, rhs: &T) -> Unreduced<P, N> {
         // SAFETY: out is fully written by fp_sub before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
-            P::fp_sub(self, rhs, out.as_mut_ptr());
+            P::fp_sub(self, rhs.as_ref(), out.as_mut_ptr());
             out.assume_init()
         }
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> Mul for &Unreduced<P, N> {
+impl<P: FpConfig<N>, const N: usize, T: AsRef<Unreduced<P, N>>> Mul<&T> for &Unreduced<P, N> {
     type Output = Unreduced<P, N>;
-
     #[inline]
-    fn mul(self, rhs: Self) -> Unreduced<P, N> {
+    fn mul(self, rhs: &T) -> Unreduced<P, N> {
         // SAFETY: out is fully written by fp_mul before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
-            P::fp_mul(self, rhs, out.as_mut_ptr());
+            P::fp_mul(self, rhs.as_ref(), out.as_mut_ptr());
             out.assume_init()
         }
     }
@@ -150,7 +184,6 @@ impl<P: FpConfig<N>, const N: usize> Mul for &Unreduced<P, N> {
 
 impl<P: FpConfig<N>, const N: usize> Neg for &Unreduced<P, N> {
     type Output = Unreduced<P, N>;
-
     #[inline]
     fn neg(self) -> Unreduced<P, N> {
         // SAFETY: out is fully written by fp_neg before assume_init.
@@ -162,57 +195,30 @@ impl<P: FpConfig<N>, const N: usize> Neg for &Unreduced<P, N> {
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> AddAssign<&Self> for Unreduced<P, N> {
+impl<P: FpConfig<N>, const N: usize, T: AsRef<Self>> AddAssign<&T> for Unreduced<P, N> {
     #[inline]
-    fn add_assign(&mut self, rhs: &Self) {
+    fn add_assign(&mut self, rhs: &T) {
         let ptr = ptr::from_mut(self);
         // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
-        unsafe { P::fp_add(ptr, rhs, ptr) };
+        unsafe { P::fp_add(ptr, rhs.as_ref(), ptr) };
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> AddAssign<&Fp<P, N>> for Unreduced<P, N> {
+impl<P: FpConfig<N>, const N: usize, T: AsRef<Self>> SubAssign<&T> for Unreduced<P, N> {
     #[inline]
-    fn add_assign(&mut self, rhs: &Fp<P, N>) {
+    fn sub_assign(&mut self, rhs: &T) {
         let ptr = ptr::from_mut(self);
         // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
-        unsafe { P::fp_add(ptr, rhs.as_unreduced(), ptr) };
+        unsafe { P::fp_sub(ptr, rhs.as_ref(), ptr) };
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> SubAssign<&Self> for Unreduced<P, N> {
+impl<P: FpConfig<N>, const N: usize, T: AsRef<Self>> MulAssign<&T> for Unreduced<P, N> {
     #[inline]
-    fn sub_assign(&mut self, rhs: &Self) {
+    fn mul_assign(&mut self, rhs: &T) {
         let ptr = ptr::from_mut(self);
         // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
-        unsafe { P::fp_sub(ptr, rhs, ptr) };
-    }
-}
-
-impl<P: FpConfig<N>, const N: usize> SubAssign<&Fp<P, N>> for Unreduced<P, N> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: &Fp<P, N>) {
-        let ptr = ptr::from_mut(self);
-        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
-        unsafe { P::fp_sub(ptr, rhs.as_unreduced(), ptr) };
-    }
-}
-
-impl<P: FpConfig<N>, const N: usize> MulAssign<&Self> for Unreduced<P, N> {
-    #[inline]
-    fn mul_assign(&mut self, rhs: &Self) {
-        let ptr = ptr::from_mut(self);
-        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
-        unsafe { P::fp_mul(ptr, rhs, ptr) };
-    }
-}
-
-impl<P: FpConfig<N>, const N: usize> MulAssign<&Fp<P, N>> for Unreduced<P, N> {
-    #[inline]
-    fn mul_assign(&mut self, rhs: &Fp<P, N>) {
-        let ptr = ptr::from_mut(self);
-        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
-        unsafe { P::fp_mul(ptr, rhs.as_unreduced(), ptr) };
+        unsafe { P::fp_mul(ptr, rhs.as_ref(), ptr) };
     }
 }
 

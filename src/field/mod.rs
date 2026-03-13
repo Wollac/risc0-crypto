@@ -64,7 +64,7 @@ pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
 ///
 /// Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`.
 /// For performance-sensitive chains of arithmetic, use [`Unreduced`] which defers the canonicality
-/// check until you call [`.check()`](Unreduced::check).
+/// check until you call [`check`](Unreduced::check).
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, PartialEq, Eq, Hash)]
 #[must_use]
@@ -173,9 +173,8 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     /// out-of-range value becomes a compile-time error.
     #[inline]
     pub const fn from_bigint(b: BigInt<N>) -> Option<Self> {
-        let fp = Self::from_bigint_unchecked(b);
-        match fp.is_valid() {
-            true => Some(fp),
+        match b.const_lt(&P::MODULUS) {
+            true => Some(Self { inner: b, _marker: core::marker::PhantomData }),
             false => None,
         }
     }
@@ -187,28 +186,6 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
             Some(fp) => fp,
             None => panic!("from_u32: value exceeds field modulus"),
         }
-    }
-
-    /// Reduces `self` in-place to its canonical representative in `[0, p)`.
-    #[inline(always)]
-    pub fn reduce_in_place(&mut self) {
-        if self.is_valid() {
-            return;
-        }
-        // If MSB of modulus is set, 2p overflows N limbs, so a >= p implies a in [p, 2p).
-        if P::MODULUS.msb_set() {
-            self.inner -= &P::MODULUS;
-            return;
-        }
-        // Adding zero forces reduction
-        *self += &Self::ZERO
-    }
-
-    /// Returns `self` reduced to its canonical representative in `[0, p)`.
-    #[inline]
-    pub fn reduced(mut self) -> Self {
-        self.reduce_in_place();
-        self
     }
 
     /// Computes `self⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
@@ -262,14 +239,14 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
 }
 
 // ---------------------------------------------------------------------------
-// Operator overloads - checked (canonical output).
+// Primitive operator impls - checked (canonical output).
 //
-// All reference-based to avoid 32-byte / 48-byte copies on R0VM
+// - &ref Op &ref: delegates to Unreduced, then .check()
+// - val OpAssign &ref: in-place via as_unreduced_mut(), then assert
 // ---------------------------------------------------------------------------
 
 impl<P: FpConfig<N>, const N: usize> Add for &Fp<P, N> {
     type Output = Fp<P, N>;
-
     #[inline]
     fn add(self, rhs: Self) -> Fp<P, N> {
         (self.as_unreduced() + rhs.as_unreduced()).check()
@@ -278,7 +255,6 @@ impl<P: FpConfig<N>, const N: usize> Add for &Fp<P, N> {
 
 impl<P: FpConfig<N>, const N: usize> Sub for &Fp<P, N> {
     type Output = Fp<P, N>;
-
     #[inline]
     fn sub(self, rhs: Self) -> Fp<P, N> {
         (self.as_unreduced() - rhs.as_unreduced()).check()
@@ -287,7 +263,6 @@ impl<P: FpConfig<N>, const N: usize> Sub for &Fp<P, N> {
 
 impl<P: FpConfig<N>, const N: usize> Mul for &Fp<P, N> {
     type Output = Fp<P, N>;
-
     #[inline]
     fn mul(self, rhs: Self) -> Fp<P, N> {
         (self.as_unreduced() * rhs.as_unreduced()).check()
@@ -296,16 +271,11 @@ impl<P: FpConfig<N>, const N: usize> Mul for &Fp<P, N> {
 
 impl<P: FpConfig<N>, const N: usize> Neg for &Fp<P, N> {
     type Output = Fp<P, N>;
-
     #[inline]
     fn neg(self) -> Fp<P, N> {
         self.as_unreduced().neg().check()
     }
 }
-
-// ---------------------------------------------------------------------------
-// Assign operators - checked, in-place (aliased input/output, zero copies).
-// ---------------------------------------------------------------------------
 
 impl<P: FpConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
     #[inline]
