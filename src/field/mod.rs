@@ -149,10 +149,10 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     pub const MODULUS: BigInt<N> = P::MODULUS;
 
     /// Shift factor for processing byte slices in chunks of `N * 4 - 1` bytes.
-    const CHUNK_BASE: Self = {
+    const CHUNK_BASE: Unreduced<P, N> = {
         let mut limbs = [0u32; N];
         limbs[N - 1] = 1 << (u32::BITS - 8);
-        Self::from_bigint_unchecked(BigInt::new(limbs))
+        Unreduced::from_bigint(BigInt::new(limbs))
     };
 
     /// Returns `true` if all limbs are zero.
