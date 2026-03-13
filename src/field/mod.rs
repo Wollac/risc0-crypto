@@ -161,12 +161,6 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
         self.inner.const_eq(&Self::ZERO.inner)
     }
 
-    /// Returns `true` if the limbs represent a canonical field element (i.e. `< p`).
-    #[inline]
-    const fn is_valid(&self) -> bool {
-        self.inner.const_lt(&P::MODULUS)
-    }
-
     /// Creates a field element from a [`BigInt`], returning `None` if the value is `>= p`.
     ///
     /// This is a const fn, so when used via the [`fp!`](crate::fp) macro in const context, an
@@ -280,27 +274,27 @@ impl<P: FpConfig<N>, const N: usize> Neg for &Fp<P, N> {
 impl<P: FpConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
     #[inline]
     fn add_assign(&mut self, rhs: &Self) {
-        // SAFETY: is_valid() restores the Fp invariant.
+        // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unreduced_mut() += rhs.as_unreduced() };
-        assert!(self.is_valid());
+        assert!(self.inner.const_lt(&P::MODULUS));
     }
 }
 
 impl<P: FpConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
     #[inline]
     fn sub_assign(&mut self, rhs: &Self) {
-        // SAFETY: is_valid() restores the Fp invariant.
+        // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unreduced_mut() -= rhs.as_unreduced() };
-        assert!(self.is_valid());
+        assert!(self.inner.const_lt(&P::MODULUS));
     }
 }
 
 impl<P: FpConfig<N>, const N: usize> MulAssign<&Self> for Fp<P, N> {
     #[inline]
     fn mul_assign(&mut self, rhs: &Self) {
-        // SAFETY: is_valid() restores the Fp invariant.
+        // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unreduced_mut() *= rhs.as_unreduced() };
-        assert!(self.is_valid());
+        assert!(self.inner.const_lt(&P::MODULUS));
     }
 }
 

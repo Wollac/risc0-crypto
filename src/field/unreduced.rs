@@ -74,6 +74,12 @@ impl<P, const N: usize> AsRef<Unreduced<P, N>> for Fp<P, N> {
 }
 
 impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
+    /// Returns `true` if the value is in `[0, p)` (i.e. already a valid [`Fp`]).
+    #[inline]
+    pub const fn is_canonical(&self) -> bool {
+        self.0.inner.const_lt(&P::MODULUS)
+    }
+
     /// Returns `true` if this element represents the field zero.
     #[inline]
     pub fn is_zero(&self) -> bool {
@@ -88,7 +94,7 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
     /// Asserts the value is in `[0, p)` and returns the inner [`Fp`]. Panics otherwise.
     #[inline]
     pub fn check(self) -> Fp<P, N> {
-        assert!(self.0.is_valid());
+        assert!(self.is_canonical());
         self.0
     }
 
@@ -108,7 +114,7 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
     /// silently fixes non-canonical values instead of catching them.
     #[inline(always)]
     pub fn reduce_in_place(&mut self) -> &Fp<P, N> {
-        if self.0.is_valid() {
+        if self.is_canonical() {
             return &self.0;
         }
         // If MSB of modulus is set, 2p overflows N limbs, so a >= p implies a in [p, 2p).
@@ -118,7 +124,7 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
         }
         // Adding zero forces reduction via the modular-add syscall
         *self += &P::ZERO;
-        assert!(self.0.is_valid());
+        assert!(self.is_canonical());
         &self.0
     }
 
