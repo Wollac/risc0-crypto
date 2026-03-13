@@ -59,6 +59,7 @@ pub type Affine = AffinePoint<Config, 12>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Unreduced;
     use rstest::rstest;
 
     #[test]
@@ -69,7 +70,7 @@ mod tests {
 
     #[test]
     fn mul_group_order_is_identity() {
-        let order = Fr::from_bigint_unchecked(FrConfig::MODULUS);
+        let order = Unreduced::from_bigint(FrConfig::MODULUS);
         assert!((&Affine::GENERATOR * &order).is_identity());
     }
 

@@ -65,8 +65,6 @@ impl<C: SWCurveConfig<N>, const N: usize> ec::Curve<N> for CurveBridge<C, N> {
     );
 }
 
-// --- AffinePoint ---
-
 /// A point on a short Weierstrass curve in affine coordinates `(x, y)`.
 ///
 /// Supports addition, subtraction, doubling, and scalar multiplication via operator overloads
@@ -111,7 +109,10 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     #[inline]
     pub fn xy(&self) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
         self.inner.as_u32s().map(|[x, y]| {
-            (Fp::from_bigint_unchecked(BigInt(*x)), Fp::from_bigint_unchecked(BigInt(*y)))
+            // SAFETY: coordinates from the EC syscall are canonical field elements.
+            unsafe {
+                (Fp::from_bigint_unchecked(BigInt(*x)), Fp::from_bigint_unchecked(BigInt(*y)))
+            }
         })
     }
 
@@ -174,8 +175,8 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
     /// Computes `self = [scalar]a` (scalar multiplication).
     #[inline]
-    pub fn mul_into(&mut self, a: &Self, scalar: &ScalarField<C, N>) {
-        a.inner.mul(scalar.as_limbs(), &mut self.inner);
+    pub fn mul_into(&mut self, a: &Self, scalar: &Unreduced<C::ScalarFieldConfig, N>) {
+        a.inner.mul(scalar.as_bigint().as_ref(), &mut self.inner);
     }
 }
 
@@ -290,7 +291,7 @@ mod tests {
         assert!((&g * &Fr::ZERO).is_identity());
 
         // [n]G = O (group order)
-        let order = Fr::from_bigint_unchecked(Fr::MODULUS);
+        let order = Unreduced::from_bigint(Fr::MODULUS);
         assert!((&g * &order).is_identity());
 
         // [2]G + [3]G = [5]G = O

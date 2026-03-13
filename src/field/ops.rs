@@ -69,13 +69,11 @@ impl FieldOps for BigInt<12> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Blanket: FieldConfig + FieldOps -> PrimeFieldConfig
+// --- Blanket: FieldConfig + FieldOps -> PrimeFieldConfig ---
 //
 // This is the only place in the crate that knows about the R0VM backend.
 // Replacing this blanket impl (and the FieldOps impls above) is all that's
 // needed to retarget to a different backend.
-// ---------------------------------------------------------------------------
 
 /// Mutable pointer cast guarded by [`TransparentWrapper`].
 const fn cast_ptr_mut<T: TransparentWrapper<Inner>, Inner>(ptr: *mut T) -> *mut Inner {

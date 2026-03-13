@@ -199,8 +199,6 @@ impl<const N: usize> BigInt<N> {
     }
 }
 
-// --- Trait impls ---
-
 impl<const N: usize> Default for BigInt<N> {
     #[inline]
     fn default() -> Self {
@@ -218,17 +216,10 @@ impl<const N: usize> core::fmt::Debug for BigInt<N> {
     }
 }
 
-impl<const N: usize> AsRef<[u32]> for BigInt<N> {
+impl<const N: usize> AsRef<[u32; N]> for BigInt<N> {
     #[inline]
-    fn as_ref(&self) -> &[u32] {
+    fn as_ref(&self) -> &[u32; N] {
         &self.0
-    }
-}
-
-impl<const N: usize> AsMut<[u32]> for BigInt<N> {
-    #[inline]
-    fn as_mut(&mut self) -> &mut [u32] {
-        &mut self.0
     }
 }
 

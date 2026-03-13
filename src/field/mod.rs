@@ -3,7 +3,10 @@ mod unreduced;
 
 use crate::BigInt;
 use bytemuck::TransparentWrapper;
-use core::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
+use core::{
+    marker::PhantomData,
+    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+};
 
 pub use unreduced::Unreduced;
 
@@ -16,7 +19,10 @@ pub trait R0FieldConfig<const N: usize>: Send + Sync + 'static + Sized {
     const MODULUS: BigInt<N>;
 
     /// Multiplicative identity.
-    const ONE: Fp<Self, N> = Fp::from_bigint_unchecked(BigInt::ONE);
+    const ONE: Fp<Self, N> = {
+        assert!(BigInt::ONE.const_lt(&Self::MODULUS));
+        Fp { inner: BigInt::ONE, _marker: PhantomData }
+    };
 }
 
 /// A prime field with arithmetic operations. Provided by a blanket impl over [`R0FieldConfig`].
@@ -33,7 +39,10 @@ pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
     const MODULUS: BigInt<N>;
 
     /// Additive identity of the field.
-    const ZERO: Fp<Self, N> = Fp::from_bigint_unchecked(BigInt::ZERO);
+    const ZERO: Fp<Self, N> = {
+        assert!(BigInt::ZERO.const_lt(&Self::MODULUS));
+        Fp { inner: BigInt::ZERO, _marker: PhantomData }
+    };
 
     /// Multiplicative identity of the field.
     const ONE: Fp<Self, N>;
@@ -62,6 +71,12 @@ pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
 
 /// An element of the prime field defined by [`P::MODULUS`](FpConfig::MODULUS).
 ///
+/// # Invariant
+///
+/// The inner value is always in `[0, p)`. All safe constructors enforce this, and
+/// [`from_bigint_unchecked`](Self::from_bigint_unchecked) is `unsafe` because violating it is
+/// immediate UB for code that depends on canonicality.
+///
 /// Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`.
 /// For performance-sensitive chains of arithmetic, use [`Unreduced`] which defers the canonicality
 /// check until you call [`check`](Unreduced::check).
@@ -71,27 +86,23 @@ pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
 #[repr(transparent)]
 pub struct Fp<P, const N: usize> {
     inner: BigInt<N>,
-    _marker: core::marker::PhantomData<P>,
-}
-
-impl<P, const N: usize> core::fmt::Debug for Fp<P, N> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_tuple("Fp").field(self.as_bigint()).finish()
-    }
+    _marker: PhantomData<P>,
 }
 
 pub type Fp256<P> = Fp<P, 8>;
 pub type Fp384<P> = Fp<P, 12>;
 
-// ---------------------------------------------------------------------------
-// Pure accessors - no arithmetic, no bounds.
-// ---------------------------------------------------------------------------
+// --- Pure accessors (no arithmetic, no bounds) ---
 
 impl<P, const N: usize> Fp<P, N> {
     /// Creates a field element from a [`BigInt`] without checking `< p`.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure `b < P::MODULUS`. Violating this breaks the [`Fp`] type invariant.
     #[inline]
-    pub const fn from_bigint_unchecked(b: BigInt<N>) -> Self {
-        Self { inner: b, _marker: core::marker::PhantomData }
+    pub const unsafe fn from_bigint_unchecked(b: BigInt<N>) -> Self {
+        Self { inner: b, _marker: PhantomData }
     }
 
     /// Returns a reference to the underlying [`BigInt`].
@@ -104,18 +115,6 @@ impl<P, const N: usize> Fp<P, N> {
     #[inline]
     pub const fn to_bigint(self) -> BigInt<N> {
         self.inner
-    }
-
-    /// Returns a reference to the underlying limb array.
-    #[inline]
-    pub const fn as_limbs(&self) -> &[u32; N] {
-        &self.inner.0
-    }
-
-    /// Returns the underlying limb array by value.
-    #[inline]
-    pub const fn to_limbs(self) -> [u32; N] {
-        self.inner.0
     }
 
     /// Reinterprets this field element as an [`Unreduced`] (zero-cost).
@@ -136,9 +135,7 @@ impl<P, const N: usize> Fp<P, N> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Arithmetic - requires `P: FpConfig<N>`.
-// ---------------------------------------------------------------------------
+// --- Arithmetic (requires `P: FpConfig<N>`) ---
 
 impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     /// Additive identity (`0`).
@@ -155,12 +152,6 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
         Unreduced::from_bigint(BigInt::new(limbs))
     };
 
-    /// Returns `true` if all limbs are zero.
-    #[inline]
-    pub const fn is_zero(&self) -> bool {
-        self.inner.const_eq(&Self::ZERO.inner)
-    }
-
     /// Creates a field element from a [`BigInt`], returning `None` if the value is `>= p`.
     ///
     /// This is a const fn, so when used via the [`fp!`](crate::fp) macro in const context, an
@@ -168,7 +159,7 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     #[inline]
     pub const fn from_bigint(b: BigInt<N>) -> Option<Self> {
         match b.const_lt(&P::MODULUS) {
-            true => Some(Self { inner: b, _marker: core::marker::PhantomData }),
+            true => Some(Self { inner: b, _marker: PhantomData }),
             false => None,
         }
     }
@@ -180,6 +171,12 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
             Some(fp) => fp,
             None => panic!("from_u32: value exceeds field modulus"),
         }
+    }
+
+    /// Returns `true` if all limbs are zero.
+    #[inline]
+    pub const fn is_zero(&self) -> bool {
+        self.inner.const_eq(&Self::ZERO.inner)
     }
 
     /// Computes `self⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
@@ -232,12 +229,16 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Primitive operator impls - checked (canonical output).
+impl<P, const N: usize> core::fmt::Debug for Fp<P, N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_tuple("Fp").field(self.as_bigint()).finish()
+    }
+}
+
+// --- Checked operator impls (canonical output) ---
 //
 // - &ref Op &ref: delegates to Unreduced, then .check()
 // - val OpAssign &ref: in-place via as_unreduced_mut(), then assert
-// ---------------------------------------------------------------------------
 
 impl<P: FpConfig<N>, const N: usize> Add for &Fp<P, N> {
     type Output = Fp<P, N>;
@@ -345,19 +346,17 @@ mod tests {
 
     #[test]
     fn assign_ops() {
-        let (a, b) = (F::from_u32(3), F::from_u32(5));
+        let (three, five) = (F::from_u32(3), F::from_u32(5));
 
-        let mut r = a;
-        r += &b;
-        assert_eq!(r, &a + &b);
-
-        let mut r = a;
-        r -= &b;
-        assert_eq!(r, &a - &b);
-
-        let mut r = a;
-        r *= &b;
-        assert_eq!(r, &a * &b);
+        let mut r = three;
+        r += &five;
+        assert_eq!(r, &three + &five);
+        let mut r = three;
+        r -= &five;
+        assert_eq!(r, &three - &five);
+        let mut r = three;
+        r *= &five;
+        assert_eq!(r, &three * &five);
     }
 
     #[test]
@@ -392,16 +391,5 @@ mod tests {
             F::from_le_bytes_mod_order(&[0x01, 0x02]),
             F::from_be_bytes_mod_order(&[0x02, 0x01]),
         );
-    }
-
-    #[test]
-    fn checked_ops_accept_unreduced_input() {
-        // 3 + 1*p = 10 in limbs, which represents 3 mod 7 but is not canonical.
-        let three_unreduced = F::from_bigint_unchecked(BigInt::from_u32(10));
-        let two = F::from_u32(2);
-
-        assert_eq!(&three_unreduced + &two, F::from_u32(5));
-        assert_eq!(&three_unreduced * &two, F::from_u32(6));
-        assert_eq!(&three_unreduced - &two, F::from_u32(1));
     }
 }

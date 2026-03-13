@@ -1,5 +1,6 @@
 use crate::{BigInt, Fp, FpConfig};
 use core::{
+    marker::PhantomData,
     mem::MaybeUninit,
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
     ptr,
@@ -10,15 +11,41 @@ use core::{
 /// Arithmetic on `Unreduced` skips the `assert!(result < p)` canonicality check that [`Fp`]
 /// performs after every operation. Convert back to [`Fp`] via [`check`](Self::check) to
 /// assert canonicality, or [`reduce`](Self::reduce) to force reduction.
-#[derive(educe::Educe)]
+#[derive(educe::Educe, bytemuck::TransparentWrapper)]
 #[educe(Copy, Clone)]
 #[must_use]
 #[repr(transparent)]
-pub struct Unreduced<P, const N: usize>(Fp<P, N>);
+#[transparent(BigInt<N>)]
+pub struct Unreduced<P, const N: usize> {
+    inner: BigInt<N>,
+    _marker: PhantomData<P>,
+}
 
-// SAFETY: Unreduced is #[repr(transparent)] over Fp, which is #[repr(transparent)] over BigInt.
-// The only other field (PhantomData<P> inside Fp) is a ZST.
-unsafe impl<P, const N: usize> bytemuck::TransparentWrapper<BigInt<N>> for Unreduced<P, N> {}
+impl<P, const N: usize> Unreduced<P, N> {
+    /// Creates an `Unreduced` from a raw [`BigInt`].
+    #[inline]
+    pub const fn from_bigint(b: BigInt<N>) -> Self {
+        Self { inner: b, _marker: PhantomData }
+    }
+
+    /// Returns a reference to the underlying [`BigInt`].
+    #[inline]
+    pub const fn as_bigint(&self) -> &BigInt<N> {
+        &self.inner
+    }
+
+    /// Returns a mutable reference to the underlying [`BigInt`].
+    #[inline]
+    pub const fn as_bigint_mut(&mut self) -> &mut BigInt<N> {
+        &mut self.inner
+    }
+
+    /// Returns the underlying [`BigInt`] by value.
+    #[inline]
+    pub const fn to_bigint(self) -> BigInt<N> {
+        self.inner
+    }
+}
 
 impl<P, const N: usize> core::fmt::Debug for Unreduced<P, N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
@@ -26,36 +53,17 @@ impl<P, const N: usize> core::fmt::Debug for Unreduced<P, N> {
     }
 }
 
-impl<P, const N: usize> Unreduced<P, N> {
-    /// Wraps a canonical [`Fp`] for unchecked arithmetic.
+impl<P, const N: usize> From<BigInt<N>> for Unreduced<P, N> {
     #[inline]
-    pub const fn new(fp: Fp<P, N>) -> Self {
-        Self(fp)
-    }
-
-    /// Creates an `Unreduced` from a raw [`BigInt`].
-    #[inline]
-    pub const fn from_bigint(b: BigInt<N>) -> Self {
-        Self(Fp::from_bigint_unchecked(b))
-    }
-
-    /// Returns a reference to the underlying [`BigInt`].
-    #[inline]
-    pub const fn as_bigint(&self) -> &BigInt<N> {
-        &self.0.inner
-    }
-
-    /// Returns a mutable reference to the underlying [`BigInt`].
-    #[inline]
-    pub const fn as_bigint_mut(&mut self) -> &mut BigInt<N> {
-        &mut self.0.inner
+    fn from(b: BigInt<N>) -> Self {
+        Self::from_bigint(b)
     }
 }
 
 impl<P, const N: usize> From<Fp<P, N>> for Unreduced<P, N> {
     #[inline]
     fn from(fp: Fp<P, N>) -> Self {
-        Self(fp)
+        Self::from_bigint(fp.inner)
     }
 }
 
@@ -77,7 +85,7 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
     /// Returns `true` if the value is in `[0, p)` (i.e. already a valid [`Fp`]).
     #[inline]
     pub const fn is_canonical(&self) -> bool {
-        self.0.inner.const_lt(&P::MODULUS)
+        self.inner.const_lt(&P::MODULUS)
     }
 
     /// Returns `true` if this element represents the field zero.
@@ -85,47 +93,43 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
     pub fn is_zero(&self) -> bool {
         if P::MODULUS.msb_set() {
             // Only 0 and p fit in N limbs.
-            self.0.is_zero() || self.0.as_bigint().const_eq(&P::MODULUS)
+            self.inner.is_zero() || self.inner.const_eq(&P::MODULUS)
         } else {
             self.reduce().is_zero()
         }
     }
 
-    /// Asserts the value is in `[0, p)` and returns the inner [`Fp`]. Panics otherwise.
+    /// Asserts the value is in `[0, p)` and returns an [`Fp`]. Panics otherwise.
     #[inline]
     pub fn check(self) -> Fp<P, N> {
         assert!(self.is_canonical());
-        self.0
+        Fp { inner: self.inner, _marker: PhantomData }
     }
 
-    /// Forces reduction to `[0, p)` and returns the inner [`Fp`].
+    /// Forces reduction to `[0, p)` and returns an [`Fp`].
     ///
     /// Prefer [`check`](Self::check) when possible: [`reduce`](Self::reduce) silently fixes
     /// non-canonical values instead of catching them.
     #[inline]
     pub fn reduce(mut self) -> Fp<P, N> {
         self.reduce_in_place();
-        self.0
+        Fp { inner: self.inner, _marker: PhantomData }
     }
 
-    /// Forces reduction to `[0, p)` in place, returning a reference to the inner [`Fp`].
-    ///
-    /// Prefer [`check`](Self::check) when possible: [`reduce_in_place`](Self::reduce_in_place)
-    /// silently fixes non-canonical values instead of catching them.
+    /// Forces reduction to `[0, p)` in place.
     #[inline(always)]
-    pub fn reduce_in_place(&mut self) -> &Fp<P, N> {
+    fn reduce_in_place(&mut self) {
         if self.is_canonical() {
-            return &self.0;
+            return;
         }
         // If MSB of modulus is set, 2p overflows N limbs, so a >= p implies a in [p, 2p).
         if P::MODULUS.msb_set() {
-            self.0.inner -= &P::MODULUS;
-            return &self.0;
+            self.inner -= &P::MODULUS;
+            return;
         }
         // Adding zero forces reduction via the modular-add syscall
         *self += &P::ZERO;
         assert!(self.is_canonical());
-        &self.0
     }
 
     /// Computes `self⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
@@ -141,13 +145,11 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
     }
 }
 
-// ---------------------------------------------------------------------------
-// Primitive operator impls.
+// --- Unchecked operator impls ---
 //
 // Two performance-critical patterns, each hand-written:
 // - &ref Op &ref: MaybeUninit output, no copies
 // - val OpAssign &ref: aliased input/output pointer, zero allocation
-// ---------------------------------------------------------------------------
 
 impl<P: FpConfig<N>, const N: usize, T: AsRef<Unreduced<P, N>>> Add<&T> for &Unreduced<P, N> {
     type Output = Unreduced<P, N>;
@@ -231,15 +233,74 @@ impl<P: FpConfig<N>, const N: usize, T: AsRef<Self>> MulAssign<&T> for Unreduced
 #[cfg(test)]
 mod tests {
     use super::*;
-    use bytemuck::TransparentWrapper;
+    use crate::{Fp256, R0FieldConfig};
 
-    /// Exercises the runtime size/align assertions inside `wrap_ref` and `peel_ref`.
-    /// Catches accidental layout changes (e.g. adding a non-ZST field to Unreduced or Fp).
+    // Test field: F_7 (arbitrary small prime, independent of any curve).
+    enum P {}
+    impl R0FieldConfig<8> for P {
+        const MODULUS: BigInt<8> = BigInt::from_u32(7);
+    }
+
+    type F = Fp256<P>;
+
+    fn uf(v: u32) -> Unreduced<P, 8> {
+        Unreduced::from_bigint(BigInt::from_u32(v))
+    }
+
     #[test]
-    fn transparent_wrapper_layout() {
-        let b = BigInt::<8>::from_u32(42);
-        let u: &Unreduced<crate::curves::secp256k1::FqConfig, 8> = Unreduced::wrap_ref(&b);
-        let roundtrip: &BigInt<8> = Unreduced::peel_ref(u);
-        assert_eq!(*roundtrip, b);
+    fn canonicality() {
+        assert!(uf(6).is_canonical());
+        assert!(!uf(7).is_canonical());
+        assert!(!uf(10).is_canonical());
+
+        assert_eq!(uf(3).check(), F::from_u32(3));
+        assert_eq!(uf(10).reduce(), F::from_u32(3));
+    }
+
+    #[test]
+    #[should_panic]
+    fn check_rejects_non_canonical() {
+        let _ = uf(10).check();
+    }
+
+    #[test]
+    fn is_zero() {
+        assert!(uf(0).is_zero());
+        assert!(uf(7).is_zero()); // p mod p = 0
+        assert!(!uf(1).is_zero());
+    }
+
+    #[test]
+    fn ops() {
+        assert_eq!((&uf(3) + &uf(5)).check(), F::from_u32(1));
+        assert_eq!((&uf(3) * &uf(5)).check(), F::from_u32(1));
+        assert_eq!((&uf(5) - &uf(3)).check(), F::from_u32(2));
+        assert_eq!((-&uf(3)).check(), F::from_u32(4));
+        assert_eq!(uf(3).inverse().check(), F::from_u32(5));
+    }
+
+    #[test]
+    fn assign_ops() {
+        let two = F::from_u32(2);
+        let mut r = uf(3);
+        r += &two;
+        assert_eq!(r.check(), F::from_u32(5));
+        let mut r = uf(3);
+        r -= &two;
+        assert_eq!(r.check(), F::from_u32(1));
+        let mut r = uf(3);
+        r *= &two;
+        assert_eq!(r.check(), F::from_u32(6));
+    }
+
+    #[test]
+    fn non_canonical_input() {
+        // 10 in limbs = 3 mod 7, not canonical
+        let three = uf(10);
+        let two = F::from_u32(2);
+
+        assert_eq!((&three + &two).check(), F::from_u32(5));
+        assert_eq!((&three * &two).check(), F::from_u32(6));
+        assert_eq!((&three - &two).check(), F::from_u32(1));
     }
 }
