@@ -34,12 +34,6 @@ impl<P, const N: usize> Unreduced<P, N> {
         &self.inner
     }
 
-    /// Returns a mutable reference to the underlying [`BigInt`].
-    #[inline]
-    pub const fn as_bigint_mut(&mut self) -> &mut BigInt<N> {
-        &mut self.inner
-    }
-
     /// Returns the underlying [`BigInt`] by value.
     #[inline]
     pub const fn to_bigint(self) -> BigInt<N> {
