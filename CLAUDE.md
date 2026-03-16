@@ -49,6 +49,7 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 | secp256r1 | 8 | -3 | ... | 1 |
 | BN254 | 8 | 0 | 3 | 1 |
 | Grumpkin | 8 | 0 | -17 | 1 |
+| secp384r1 | 12 | -3 | ... | 1 |
 | BLS12-381 | 12 | 0 | 4 | has cofactor |
 
 Each curve file follows the same pattern: `FqConfig` (base field), `FrConfig` (scalar field), `Config` (curve), and type aliases `Fq`, `Fr`, `Affine`.
