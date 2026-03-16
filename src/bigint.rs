@@ -168,6 +168,21 @@ impl<const N: usize> BigInt<N> {
         self.const_eq(&Self::ZERO)
     }
 
+    /// Returns the minimum number of bits needed to represent this value.
+    ///
+    /// Returns `0` for zero, otherwise `floor(log2(self)) + 1`.
+    #[inline]
+    pub const fn bit_len(&self) -> u32 {
+        let mut i = N;
+        while i > 0 {
+            i -= 1;
+            if self.0[i] != 0 {
+                return (i as u32 + 1) * Self::LIMB_BITS as u32 - self.0[i].leading_zeros();
+            }
+        }
+        0
+    }
+
     /// Equality comparison usable in `const` contexts.
     ///
     /// Equivalent to `==` but available in `const fn` where `PartialEq` cannot be used.
@@ -368,6 +383,24 @@ mod tests {
         assert!(BigInt::<8>::ZERO.is_zero());
         assert!(!BigInt::<8>::from_u32(1).is_zero());
         assert!(!BigInt::<8>::from_hex("0x10000000000000000").is_zero());
+    }
+
+    #[test]
+    fn bit_len() {
+        assert_eq!(BigInt::<8>::ZERO.bit_len(), 0);
+        assert_eq!(BigInt::<8>::ONE.bit_len(), 1);
+        assert_eq!(BigInt::<8>::from_u32(2).bit_len(), 2);
+        assert_eq!(BigInt::<8>::from_u32(3).bit_len(), 2);
+        assert_eq!(BigInt::<8>::from_u32(0xff).bit_len(), 8);
+        assert_eq!(BigInt::<8>::from_u32(0x100).bit_len(), 9);
+        assert_eq!(BigInt::<8>::from_u32(u32::MAX).bit_len(), 32);
+        // multi-limb: 0x1_00000000 = 2³²
+        assert_eq!(BigInt::<8>::from_hex("0x100000000").bit_len(), 33);
+        // 256-bit value (secp256k1 group order)
+        let n = BigInt::<8>::from_hex(
+            "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
+        );
+        assert_eq!(n.bit_len(), 256);
     }
 
     #[test]

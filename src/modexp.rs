@@ -20,12 +20,7 @@ pub trait BitAccess {
 impl<const N: usize> BitAccess for BigInt<N> {
     #[inline]
     fn bits(&self) -> usize {
-        for i in (0..N).rev() {
-            if self.0[i] != 0 {
-                return (i + 1) * Self::LIMB_BITS - self.0[i].leading_zeros() as usize;
-            }
-        }
-        0
+        self.bit_len() as usize
     }
 
     #[inline]
@@ -136,17 +131,7 @@ mod tests {
     use rstest::rstest;
 
     #[test]
-    fn bigint_bits() {
-        assert_eq!(BigInt::<8>::ZERO.bits(), 0);
-        assert_eq!(BigInt::<8>::from_u32(1).bits(), 1);
-        assert_eq!(BigInt::<8>::from_u32(255).bits(), 8);
-        assert_eq!(BigInt::<8>::from_u32(256).bits(), 9);
-        // high limb
-        assert_eq!(BigInt::<2>::from_hex("0x100000000").bits(), 33);
-    }
-
-    #[test]
-    fn bigint_bit() {
+    fn bigint_bit_access_bit() {
         let v = BigInt::<8>::from_u32(0b1010);
         assert!(!v.bit(0));
         assert!(v.bit(1));
