@@ -37,9 +37,7 @@ impl<const N: usize> BitAccess for BigInt<N> {
 
 /// Dispatches modular multiplication by array width.
 ///
-/// Sealed - cannot be implemented outside this crate. Separate from
-/// [`FieldArith`](crate::field::FieldArith) because 4096-bit only has modmul in risc0-bigint2
-/// (no add/sub/inv), and modexp only needs multiplication.
+/// Sealed - cannot be implemented outside this crate.
 pub trait ModMul: private::Sealed {
     #[doc(hidden)]
     fn modmul(a: &Self, b: &Self, m: &Self, r: &mut Self);
@@ -114,7 +112,7 @@ where
 
     // start from second-highest bit (MSB is implicitly handled by initializing cur = base)
     for i in (0..n - 1).rev() {
-        // next <- curr^2
+        // next <- curr²
         <[u32; N]>::modmul_unchecked(&cur.0, &cur.0, &modulus.0, &mut buf.0);
 
         if exp.bit(i) {
@@ -127,7 +125,7 @@ where
     }
 
     // verify result is canonical (honest prover check)
-    assert!(cur.is_less(modulus));
+    assert!(*cur < *modulus);
 
     *cur
 }

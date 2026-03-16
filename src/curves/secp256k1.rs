@@ -5,13 +5,13 @@
 //! - Cofactor: 1
 //! - Spec: <https://www.secg.org/sec2-v2.pdf> (section 2.4.1)
 
-use crate::{AffinePoint, BigInt, Fp, PrimeFieldConfig, SWCurveConfig, bigint, fp};
+use crate::{AffinePoint, BigInt, Fp, R0FieldConfig, SWCurveConfig, bigint, fp};
 
 // --- Base field (Fq): coordinates, modulus = p ---
 
 pub enum FqConfig {}
 
-impl PrimeFieldConfig<8> for FqConfig {
+impl R0FieldConfig<8> for FqConfig {
     const MODULUS: BigInt<8> =
         bigint!("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f");
 }
@@ -22,7 +22,7 @@ pub type Fq = Fp<FqConfig, 8>;
 
 pub enum FrConfig {}
 
-impl PrimeFieldConfig<8> for FrConfig {
+impl R0FieldConfig<8> for FrConfig {
     const MODULUS: BigInt<8> =
         bigint!("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
 }
@@ -37,7 +37,7 @@ impl SWCurveConfig<8> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
 
-    // Curve equation: y^2 = x^3 + 7
+    // curve equation: y² = x³ + 7
     const COEFF_A: Fq = Fq::ZERO;
     const COEFF_B: Fq = fp!("0x7");
 
@@ -56,6 +56,7 @@ pub type Affine = AffinePoint<Config, 8>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Unreduced;
     use rstest::rstest;
 
     #[test]
@@ -66,8 +67,8 @@ mod tests {
 
     #[test]
     fn mul_group_order_is_identity() {
-        let order = Fr::from_bigint_unchecked(FrConfig::MODULUS);
-        assert!((Affine::GENERATOR * order).is_identity());
+        let order = Unreduced::from_bigint(FrConfig::MODULUS);
+        assert!((&Affine::GENERATOR * &order).is_identity());
     }
 
     /// noble-curves/secp256k1 test vectors
@@ -83,7 +84,7 @@ mod tests {
         fp!("0x5a79d6b289610c68bc3b47f3d72f9788a26a06868b4d8e433e1e2ad76fb7dc76"),
     )]
     fn noble_curves_scalar_mul(#[case] k: Fr, #[case] expected_x: Fq, #[case] expected_y: Fq) {
-        let result = Affine::GENERATOR * k;
+        let result = &Affine::GENERATOR * &k;
         let (rx, ry) = result.xy().expect("result should not be identity");
         assert_eq!(rx, expected_x);
         assert_eq!(ry, expected_y);

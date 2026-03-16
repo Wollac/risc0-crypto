@@ -5,13 +5,13 @@
 //! - Cofactor: 1
 //! - Spec: <https://www.secg.org/sec2-v2.pdf> (section 2.4.2)
 
-use crate::{AffinePoint, BigInt, Fp, PrimeFieldConfig, SWCurveConfig, bigint, fp};
+use crate::{AffinePoint, BigInt, Fp, R0FieldConfig, SWCurveConfig, bigint, fp};
 
 // --- Base field (Fq): coordinates, modulus = p ---
 
 pub enum FqConfig {}
 
-impl PrimeFieldConfig<8> for FqConfig {
+impl R0FieldConfig<8> for FqConfig {
     const MODULUS: BigInt<8> =
         bigint!("0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
 }
@@ -22,7 +22,7 @@ pub type Fq = Fp<FqConfig, 8>;
 
 pub enum FrConfig {}
 
-impl PrimeFieldConfig<8> for FrConfig {
+impl R0FieldConfig<8> for FrConfig {
     const MODULUS: BigInt<8> =
         bigint!("0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
 }
@@ -37,7 +37,7 @@ impl SWCurveConfig<8> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
 
-    // Curve equation: y^2 = x^3 - 3x + b
+    // curve equation: y² = x³ - 3x + b
     const COEFF_A: Fq = fp!("0xffffffff00000001000000000000000000000000fffffffffffffffffffffffc");
     const COEFF_B: Fq = fp!("0x5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
 
@@ -56,6 +56,7 @@ pub type Affine = AffinePoint<Config, 8>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Unreduced;
     use rstest::rstest;
 
     #[test]
@@ -66,8 +67,8 @@ mod tests {
 
     #[test]
     fn mul_group_order_is_identity() {
-        let order = Fr::from_bigint_unchecked(FrConfig::MODULUS);
-        assert!((Affine::GENERATOR * order).is_identity());
+        let order = Unreduced::from_bigint(FrConfig::MODULUS);
+        assert!((&Affine::GENERATOR * &order).is_identity());
     }
 
     /// RFC 5903 §8.1 - ECDH test vectors: verify [k]G == (x, y).
@@ -83,7 +84,7 @@ mod tests {
         fp!("0x56fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab"),
     )]
     fn rfc5903_scalar_mul(#[case] k: Fr, #[case] expected_x: Fq, #[case] expected_y: Fq) {
-        let result = Affine::GENERATOR * k;
+        let result = &Affine::GENERATOR * &k;
         let (rx, ry) = result.xy().expect("result should not be identity");
         assert_eq!(rx, expected_x);
         assert_eq!(ry, expected_y);

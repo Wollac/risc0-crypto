@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ```bash
 cargo check                # Type check (~0.08s)
-cargo clippy --lib         # Lint (expect self-convention warnings — intentional for const fn)
+cargo clippy --lib         # Lint (expect self-convention warnings - intentional for const fn)
 cargo +nightly fmt         # Format (requires nightly for rustfmt.toml options)
 cargo doc --lib            # Generate docs
 
@@ -17,7 +17,7 @@ cargo risczero guest test
 RUST_LOG=info RISC0_INFO=true cargo risczero guest test
 ```
 
-Tests **cannot** run on the host — `risc0-bigint2` field and EC operations are backed by RISC-V syscalls.
+Tests **cannot** run on the host - `risc0-bigint2` field and EC operations are backed by RISC-V syscalls.
 
 ## Architecture
 
@@ -25,19 +25,21 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 
 ### Core Abstractions (layered bottom-up)
 
-1. **`BigInt<N>`** (`src/bigint.rs`) — Fixed-size integer as `[u32; N]` little-endian limbs. Supports const hex parsing (`bigint!()` macro) and big-endian byte conversion.
+1. **`BigInt<N>`** (`src/bigint.rs`) - Fixed-size integer as `[u32; N]` little-endian limbs. Supports const hex parsing (`bigint!()` macro) and big-endian byte conversion.
 
-2. **`Fp<P, N>`** (`src/field/`) — Prime field element generic over a config type `P` and limb count `N`. Type aliases: `Fp256<P>` (N=8, 256-bit) and `Fp384<P>` (N=12, 384-bit).
-   - `PrimeFieldConfig<N>` trait: implement to define a new field (just set `MODULUS`)
-   - Checked ops (`add`, `mul`, etc.) produce canonical results in `[0, p)`
-   - Unchecked ops (`add_unchecked`, etc.) may return unreduced values — use for intermediate computations, then feed into a checked op for the final result
+2. **`Fp<P, N>`** (`src/field/`) - Prime field element generic over a config type `P` and limb count `N`. Type aliases: `Fp256<P>` (N=8, 256-bit) and `Fp384<P>` (N=12, 384-bit).
+   - `R0FieldConfig<N>` trait: implement to define a new field (just set `MODULUS`)
+   - `FpConfig<N>` trait: internal dispatch layer with unsafe `fp_*` pointer-based methods; a blanket impl in `ops.rs` derives it from every `R0FieldConfig`
+   - Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`
+   - For intermediate computations, use `Unreduced<P, N>` (skips canonicality checks), then call `.check()` to assert the result is in `[0, p)` before converting back to `Fp`
+   - `Fp` implements `AsRef<Unreduced<P, N>>`, so `Fp` values can be used directly in `Unreduced` arithmetic and as scalars in `AffinePoint * scalar`
 
-3. **`AffinePoint<C, N>`** (`src/curve/`) — Short Weierstrass curve point in affine coordinates.
+3. **`AffinePoint<C, N>`** (`src/curve/`) - Short Weierstrass curve point in affine coordinates.
    - `SWCurveConfig<N>` trait: implement to define a curve (base/scalar field configs, coefficients A/B, generator)
    - Operator overloads: `+`, `-`, `*` (scalar mul) via `src/curve/ops.rs`
    - Bridges to `risc0_bigint2::ec` via `CurveBridge` phantom type
 
-4. **`src/field/ops.rs`** — `FieldArith` trait dispatches modular arithmetic to `risc0-bigint2` functions by width (256-bit or 384-bit).
+4. **`src/field/ops.rs`** - Blanket impl connecting `R0FieldConfig` to `FpConfig` via a private `FieldOps` trait that dispatches to `risc0-bigint2` functions by width (256-bit or 384-bit). Replacing this module is all that's needed to retarget to a different backend.
 
 ### Supported Curves (`src/curves/`)
 
@@ -58,14 +60,18 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 - **Const-time construction**: `fp!()` and `bigint!()` macros validate at compile time
 - **Zero heap allocation**: all types are stack-allocated, `no_std` compatible
 - **Cofactor-1 optimization**: curves with cofactor 1 override `is_in_correct_subgroup()` to return `true`, skipping the expensive `[order]P = O` check
-- **Honest prover checks with `assert!` after unchecked ops**: `risc0-bigint2` unchecked operations always return canonical (reduced) results for an honest prover - only a dishonest prover can produce unreduced output. We use `assert!(result.is_valid())` after unchecked op chains as a lightweight honest-prover check, matching `risc0-bigint2`'s own convention. Do NOT replace these asserts with `.reduce()` - that would hide dishonest-prover misbehavior instead of catching it
+- **Honest prover checks via `Unreduced::check()`**: `risc0-bigint2` operations always return canonical (reduced) results for an honest prover - only a dishonest prover can produce unreduced output. After chains of `Unreduced` arithmetic, call `.check()` (which asserts `is_canonical()`) to convert back to `Fp`. Do NOT use `.reduce()` instead - that silently fixes non-canonical values and hides dishonest-prover misbehavior
 
 ## Style
 
-- Max line width is 100 (code and comments)
+- Max line width is 100 (code and comments). Wrap comments and docs as close to 100 as possible - do not leave short lines when text could fill the line
 - Comments: lowercase start unless a full sentence; prefer short bullet-point style over prose
 - No blank lines between `use` statements
 - See `rustfmt.toml` for formatting config
+- Math notation in comments/docs:
+  - Unicode superscripts for exponentiation: `y² = x³`, `self⁻¹ mod p`
+  - Bracket notation for scalar multiplication, no `*`: `[k]P`, `[order]P == O`
+  - ASCII for prose operators: `in`, `->`, `>=` (not `∈`, `→`, `≥`)
 
 ## Adding a New Curve
 

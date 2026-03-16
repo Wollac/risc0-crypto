@@ -6,12 +6,12 @@ license = "Apache-2.0"
 description = "Cryptographic primitives built on risc0-bigint2"
 
 [dependencies]
-bytemuck = "1.25.0"
-educe = "0.6.0"
+bytemuck = { version = "1.25", features = ["derive"] }
+educe = "0.6"
 risc0-bigint2 = "1.4.13"
 
 [dev-dependencies]
-rstest = "0.26.1"
+rstest = "0.26"
 
 [lints.rust]
 rust-2018-idioms = "deny"

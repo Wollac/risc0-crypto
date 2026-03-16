@@ -1,7 +1,12 @@
+use core::{
+    cmp::Ordering,
+    ops::{AddAssign, SubAssign},
+};
+
 /// A fixed-size `N * 32`-bit integer stored as `N` little-endian `u32` limbs.
-#[repr(transparent)]
-#[derive(Copy, Clone, PartialEq, Eq, Hash)]
+#[derive(Copy, Clone, PartialEq, Eq, Hash, bytemuck::TransparentWrapper)]
 #[must_use]
+#[repr(transparent)]
 pub struct BigInt<const N: usize>(pub [u32; N]);
 
 impl<const N: usize> BigInt<N> {
@@ -151,12 +156,26 @@ impl<const N: usize> BigInt<N> {
         bytemuck::cast_slice(&self.0)
     }
 
+    /// Returns `true` if the most significant bit is set.
+    #[inline]
+    pub const fn msb_set(&self) -> bool {
+        self.0[N - 1] >> 31 != 0
+    }
+
     /// Returns `true` if all limbs are zero.
     #[inline]
     pub const fn is_zero(&self) -> bool {
+        self.const_eq(&Self::ZERO)
+    }
+
+    /// Equality comparison usable in `const` contexts.
+    ///
+    /// Equivalent to `==` but available in `const fn` where `PartialEq` cannot be used.
+    #[inline]
+    pub const fn const_eq(&self, other: &Self) -> bool {
         let mut i = 0;
         while i < N {
-            if self.0[i] != 0 {
+            if self.0[i] != other.0[i] {
                 return false;
             }
             i += 1;
@@ -164,9 +183,11 @@ impl<const N: usize> BigInt<N> {
         true
     }
 
-    /// Unsigned less-than comparison (MSB-first).
+    /// Unsigned less-than comparison, usable in `const` contexts.
+    ///
+    /// Equivalent to `<` but available in `const fn` where `PartialOrd` cannot be used.
     #[inline]
-    pub const fn is_less(&self, other: &Self) -> bool {
+    pub const fn const_lt(&self, other: &Self) -> bool {
         let mut i = N;
         while i > 0 {
             i -= 1;
@@ -177,8 +198,6 @@ impl<const N: usize> BigInt<N> {
         false
     }
 }
-
-// --- Trait impls ---
 
 impl<const N: usize> Default for BigInt<N> {
     #[inline]
@@ -197,17 +216,10 @@ impl<const N: usize> core::fmt::Debug for BigInt<N> {
     }
 }
 
-impl<const N: usize> AsRef<[u32]> for BigInt<N> {
+impl<const N: usize> AsRef<[u32; N]> for BigInt<N> {
     #[inline]
-    fn as_ref(&self) -> &[u32] {
+    fn as_ref(&self) -> &[u32; N] {
         &self.0
-    }
-}
-
-impl<const N: usize> AsMut<[u32]> for BigInt<N> {
-    #[inline]
-    fn as_mut(&mut self) -> &mut [u32] {
-        &mut self.0
     }
 }
 
@@ -229,6 +241,46 @@ impl<const N: usize> From<BigInt<N>> for [u32; N] {
     #[inline]
     fn from(val: BigInt<N>) -> Self {
         val.0
+    }
+}
+
+impl<const N: usize> PartialOrd for BigInt<N> {
+    #[inline]
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl<const N: usize> Ord for BigInt<N> {
+    #[inline]
+    fn cmp(&self, other: &Self) -> Ordering {
+        for i in (0..N).rev() {
+            match self.0[i].cmp(&other.0[i]) {
+                Ordering::Equal => continue,
+                ord => return ord,
+            }
+        }
+        Ordering::Equal
+    }
+}
+
+impl<const N: usize> AddAssign<&Self> for BigInt<N> {
+    #[inline(always)]
+    fn add_assign(&mut self, other: &Self) {
+        let mut carry = false;
+        for i in 0..N {
+            (self.0[i], carry) = self.0[i].carrying_add(other.0[i], carry);
+        }
+    }
+}
+
+impl<const N: usize> SubAssign<&Self> for BigInt<N> {
+    #[inline(always)]
+    fn sub_assign(&mut self, rhs: &Self) {
+        let mut borrow = false;
+        for i in 0..N {
+            (self.0[i], borrow) = self.0[i].borrowing_sub(rhs.0[i], borrow);
+        }
     }
 }
 
@@ -319,18 +371,27 @@ mod tests {
     }
 
     #[test]
-    fn is_less() {
+    fn ordering() {
         let a = BigInt::<8>::from_u32(5);
         let b = BigInt::<8>::from_u32(10);
 
-        assert!(a.is_less(&b));
-        assert!(!b.is_less(&a));
-        assert!(!a.is_less(&a)); // equal
+        // const_lt (for const contexts)
+        assert!(a.const_lt(&b));
+        assert!(!b.const_lt(&a));
+        assert!(!a.const_lt(&a));
+
+        // Ord / PartialOrd operators
+        assert!(a < b);
+        assert!(b > a);
+        assert!(a <= a);
+        assert!(a >= a);
+        assert_eq!(a.cmp(&b), Ordering::Less);
 
         // high-limb difference dominates
         let lo = BigInt::<2>::from_hex("0x00000001ffffffff");
         let hi = BigInt::<2>::from_hex("0x0000000200000000");
-        assert!(lo.is_less(&hi));
-        assert!(!hi.is_less(&lo));
+        assert!(lo < hi);
+        assert!(lo.const_lt(&hi));
+        assert!(!hi.const_lt(&lo));
     }
 }

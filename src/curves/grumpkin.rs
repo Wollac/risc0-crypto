@@ -3,7 +3,7 @@
 //! - Equation: `y² = x³ - 17`
 //! - Base field: [BN254](super::bn254)'s scalar field (and vice versa)
 //! - Cofactor: 1
-//! - Spec: [https://aztecprotocol.github.io/aztec-connect/primitives.html](https://aztecprotocol.github.io/aztec-connect/primitives.html#2-grumpkin---a-curve-on-top-of-bn-254-for-snark-efficient-group-operations)
+//! - Spec: <https://aztecprotocol.github.io/aztec-connect/primitives.html> (section 2: Grumpkin)
 
 use crate::{AffinePoint, SWCurveConfig, fp};
 
@@ -21,7 +21,7 @@ impl SWCurveConfig<8> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
 
-    // Curve equation: y^2 = x^3 - 17
+    // curve equation: y² = x³ - 17
     const COEFF_A: Fq = Fq::ZERO;
     const COEFF_B: Fq = fp!("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593effffff0");
 
@@ -40,7 +40,7 @@ pub type Affine = AffinePoint<Config, 8>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::PrimeFieldConfig;
+    use crate::{FpConfig, Unreduced};
     use rstest::rstest;
 
     #[test]
@@ -51,8 +51,8 @@ mod tests {
 
     #[test]
     fn mul_group_order_is_identity() {
-        let order = Fr::from_bigint_unchecked(FrConfig::MODULUS);
-        assert!((Affine::GENERATOR * order).is_identity());
+        let order = Unreduced::from_bigint(FrConfig::MODULUS);
+        assert!((&Affine::GENERATOR * &order).is_identity());
     }
 
     /// noir-lang/noir bn254_blackbox_solver - scalar multiplication test vectors
@@ -63,7 +63,7 @@ mod tests {
         fp!("0x23f10e9e43a3ae8d75d24154e796aae12ae7af546716e8f81a2564f1b5814130"),
     )]
     fn noir_scalar_mul(#[case] k: Fr, #[case] expected_x: Fq, #[case] expected_y: Fq) {
-        let result = Affine::GENERATOR * k;
+        let result = &Affine::GENERATOR * &k;
         let (rx, ry) = result.xy().expect("result should not be identity");
         assert_eq!(rx, expected_x);
         assert_eq!(ry, expected_y);
