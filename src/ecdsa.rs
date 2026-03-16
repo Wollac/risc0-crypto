@@ -3,6 +3,38 @@
 //! The caller provides the message hash as a big-endian byte slice (e.g. a SHA-256 digest) and a
 //! cryptographically secure random nonce for signing. No hash functions or RNG are included.
 //!
+//! # Example
+//!
+//! ```no_run
+//! # use risc0_crypto::{AffinePoint, ecdsa::Signature, curves::secp256k1::{self, Fr, Affine}};
+//! #
+//! let d: Fr = /* private key */
+//! # Fr::ONE;
+//! let k: Fr = /* cryptographically secure random nonce */
+//! # Fr::ONE;
+//! let hash: &[u8] = /* message digest, e.g. SHA-256 output */
+//! # &[0u8; 32];
+//!
+//! // sign
+//! let sig = Signature::<secp256k1::Config, 8>::sign(&d, &k, hash).unwrap();
+//!
+//! // verify
+//! let pubkey = &Affine::GENERATOR * &d;
+//! assert!(sig.verify(&pubkey, hash));
+//! ```
+//!
+//! # Curve compatibility
+//!
+//! ECDSA requires the scalar field order `n` to be close in size to the base field order `p`.
+//! Curves where `bit_len(n) < bit_len(p)` (e.g. BLS12-381) are rejected at compile time:
+//!
+//! ```compile_fail
+//! # use risc0_crypto::{ecdsa::Signature, curves::bls12_381::{self, Fr}};
+//! #
+//! type Sig = Signature<bls12_381::Config, 12>;
+//! let _ = Sig::sign(&Fr::ONE, &Fr::ONE, &[0xff]);
+//! ```
+//!
 //! # Security
 //!
 //! Nonce reuse or predictable nonces leak the private key.
@@ -64,16 +96,16 @@ impl<C: SWCurveConfig<N>, const N: usize> Signature<C, N> {
     ///
     /// # Panics
     ///
-    /// Panics if `d` or `k` is zero.
+    /// Panics if `k` is zero.
     pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
-        assert!(!d.is_zero(), "private key d must be nonzero");
         assert!(!k.is_zero(), "nonce k must be nonzero");
 
         let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
 
         // R = [k]G
         let r_pt = &AffinePoint::<C, N>::GENERATOR * k;
-        let (x, _) = r_pt.xy().expect("[k]G is not identity for nonzero k");
+        // SAFETY: [k]G is not identity for nonzero k
+        let (x, _) = unsafe { r_pt.xy().unwrap_unchecked() };
 
         // r = R.x mod n
         let r = base_to_scalar::<C, N>(x);
@@ -103,7 +135,7 @@ impl<C: SWCurveConfig<N>, const N: usize> Signature<C, N> {
         let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
 
         // u1 = z * s⁻¹, u2 = r * s⁻¹
-        let s_inv = self.s.as_unreduced().inverse();
+        let s_inv = self.s.inverse();
         let u1 = &s_inv * &z;
         let u2 = &s_inv * &self.r;
 
@@ -173,6 +205,16 @@ mod tests {
         let sig = Sig::sign(&d, &k, HASH).unwrap();
         let wrong_pk = &Affine::GENERATOR * &Fr::from_u32(2);
         assert!(!sig.verify(&wrong_pk, HASH));
+    }
+
+    #[test]
+    fn sign_with_zero_private_key() {
+        let d: Fr = Fr::ZERO;
+        let pubkey = &Affine::GENERATOR * &d;
+        let k: Fr = Fr::ONE;
+
+        let sig = Sig::sign(&d, &k, HASH).unwrap();
+        assert!(sig.verify(&pubkey, HASH));
     }
 
     #[test]
