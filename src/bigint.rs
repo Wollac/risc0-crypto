@@ -4,7 +4,7 @@ use core::{
 };
 
 /// A fixed-size `N * 32`-bit integer stored as `N` little-endian `u32` limbs.
-#[derive(Copy, Clone, PartialEq, Eq, Hash, bytemuck::TransparentWrapper)]
+#[derive(Copy, Clone, bytemuck::TransparentWrapper)]
 #[must_use]
 #[repr(transparent)]
 pub struct BigInt<const N: usize>(pub [u32; N]);
@@ -258,6 +258,15 @@ impl<const N: usize> From<BigInt<N>> for [u32; N] {
         val.0
     }
 }
+
+impl<const N: usize> PartialEq for BigInt<N> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.const_eq(other)
+    }
+}
+
+impl<const N: usize> Eq for BigInt<N> {}
 
 impl<const N: usize> PartialOrd for BigInt<N> {
     #[inline]

@@ -88,7 +88,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// not in the correct subgroup.
     #[inline]
     pub fn new(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
-        let p = Self::new_unchecked(x, y);
+        let p = Self { inner: ec::AffinePoint::new_unchecked(x.to_bigint().0, y.to_bigint().0) };
         if p.is_on_curve() && p.is_in_correct_subgroup() { Some(p) } else { None }
     }
 
