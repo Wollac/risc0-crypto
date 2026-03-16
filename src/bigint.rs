@@ -177,7 +177,7 @@ impl<const N: usize> BigInt<N> {
         while i > 0 {
             i -= 1;
             if self.0[i] != 0 {
-                return (u32::BITS - self.0[i].leading_zeros()) + i as u32 * u32::BITS;
+                return (i as u32 + 1) * Self::LIMB_BITS as u32 - self.0[i].leading_zeros();
             }
         }
         0

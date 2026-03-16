@@ -172,9 +172,14 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     /// Creates a field element from a `u32`. Panics if `val >= p`.
     #[inline]
     pub const fn from_u32(val: u32) -> Self {
-        match Self::from_bigint(BigInt::from_u32(val)) {
-            Some(fp) => fp,
-            None => panic!("from_u32: value exceeds field modulus"),
+        if P::MODULUS_BIT_LEN > u32::BITS {
+            // modulus > u32::MAX, so any u32 is in range
+            Self { inner: BigInt::from_u32(val), _marker: PhantomData }
+        } else {
+            match Self::from_bigint(BigInt::from_u32(val)) {
+                Some(fp) => fp,
+                None => panic!("from_u32: value exceeds field modulus"),
+            }
         }
     }
 
