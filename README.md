@@ -10,12 +10,14 @@ Uses fewer cycles than the patched upstream crates provided by RISC Zero.
 - R0VM accelerated, `no_std`, zero heap allocation
 - [Short Weierstrass](https://en.wikipedia.org/wiki/Elliptic_curve#Short_Weierstrass_form) curve arithmetic
 - Prime field arithmetic (`Fp256`, `Fp384`) with checked and unchecked operations
+- ECDSA signing and verification (any compatible curve)
 - Modular exponentiation for 256, 384, and 4096-bit integers
 
 ## Supported Curves
 
 - [secp256k1](src/curves/secp256k1.rs)
 - [secp256r1](src/curves/secp256r1.rs)
+- [secp384r1](src/curves/secp384r1.rs)
 - [BN254](src/curves/bn254.rs)
 - [Grumpkin](src/curves/grumpkin.rs)
 - [BLS12-381](src/curves/bls12_381.rs)
@@ -23,11 +25,15 @@ Uses fewer cycles than the patched upstream crates provided by RISC Zero.
 ## Example
 
 ```rust,ignore
-use risc0_crypto::curves::secp256k1::{Affine, Fr};
-use risc0_crypto::fp;
+use risc0_crypto::{ecdsa::Signature, curves::secp256k1::{self, Affine, Fr}};
 
+// scalar multiplication
 let scalar: Fr = fp!("0xdeadbeef");
-let point = Affine::generator() * scalar;
+let point = &Affine::GENERATOR * &scalar;
+
+// ECDSA sign and verify
+let sig = Signature::<secp256k1::Config, 8>::sign(&d, &k, &hash).unwrap();
+assert!(sig.verify(&pubkey, &hash));
 ```
 
 ## Testing
