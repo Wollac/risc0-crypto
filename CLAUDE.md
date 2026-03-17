@@ -36,8 +36,9 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 
 3. **`AffinePoint<C, N>`** (`src/curve/`) - Short Weierstrass curve point in affine coordinates.
    - `SWCurveConfig<N>` trait: implement to define a curve (base/scalar field configs, coefficients A/B, generator)
-   - Operator overloads: `+`, `-`, `*` (scalar mul) via `src/curve/ops.rs`
-   - Bridges to `risc0_bigint2::ec` via `CurveBridge` phantom type
+   - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul) via `src/curve/ops.rs`
+   - `Double` / `DoubleAssign` traits (exported) for explicit point doubling
+   - EC operations call `ec_add_raw`/`ec_double_raw` in `src/curve/ffi.rs`, which invoke `sys_bigint2_3`/`sys_bigint2_4` directly with pre-compiled circuit blobs (copied from `risc0-bigint2` into `OUT_DIR` by `build.rs`)
 
 4. **`src/field/ops.rs`** - Blanket impl connecting `R0FieldConfig` to `FpConfig` via a private `FieldOps` trait that dispatches to `risc0-bigint2` functions by width (256-bit or 384-bit). Replacing this module is all that's needed to retarget to a different backend.
 
