@@ -25,7 +25,7 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 
 ### Core Abstractions (layered bottom-up)
 
-1. **`BigInt<N>`** (`src/bigint.rs`) - Fixed-size integer as `[u32; N]` little-endian limbs. Supports const hex parsing (`bigint!()` macro), big-endian byte conversion, and `bit_len()` (const fn, used to auto-derive `MODULUS_BIT_LEN` on `Fp`).
+1. **`BigInt<N>`** (`src/bigint.rs`) - Fixed-size integer as `[u32; N]` little-endian limbs. Supports const hex parsing (`bigint!()` macro), big-endian byte conversion, `bit_len()` (const fn, used to auto-derive `MODULUS_BIT_LEN` on `Fp`), and `const_eq()` / `const_lt()` for const-context comparisons. `PartialEq` and `Ord` use limb-by-limb ops rather than derived memcmp - memcmp is expensive on R0VM.
 
 2. **`Fp<P, N>`** (`src/field/`) - Prime field element generic over a config type `P` and limb count `N`. Type aliases: `Fp256<P>` (N=8, 256-bit) and `Fp384<P>` (N=12, 384-bit).
    - `R0FieldConfig<N>` trait: implement to define a new field (just set `MODULUS`)

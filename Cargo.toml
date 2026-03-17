@@ -8,10 +8,14 @@ description = "Cryptographic primitives built on risc0-bigint2"
 [dependencies]
 bytemuck = { version = "1.25", features = ["derive"] }
 educe = "0.6"
+include_bytes_aligned = "0.2"
 risc0-bigint2 = "1.4.13"
 
 [dev-dependencies]
 rstest = "0.26"
+
+[build-dependencies]
+cargo_metadata = "0.23.1"
 
 [lints.rust]
 rust-2018-idioms = "deny"

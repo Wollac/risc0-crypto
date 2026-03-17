@@ -1,3 +1,4 @@
+mod ffi;
 mod ops;
 
 use crate::{
@@ -6,25 +7,6 @@ use crate::{
 };
 use bytemuck::TransparentWrapper;
 use core::marker::PhantomData;
-use risc0_bigint2::ec;
-
-/// Constructs an [`ec::AffinePoint`] in const context.
-///
-/// Workaround: `ec::AffinePoint::new_unchecked` is not const in `risc0_bigint2`.
-const fn const_affine_point<const N: usize, C>(coords: [[u32; N]; 2]) -> ec::AffinePoint<N, C> {
-    #[allow(unused)]
-    struct Raw<const N: usize> {
-        buffer: [[u32; N]; 2],
-        identity: bool,
-    }
-    // SAFETY: ec::AffinePoint<N, C> has the layout { buffer, identity, PhantomData<C> }
-    // where PhantomData<C> is a ZST, so it matches Raw<N>.
-    assert!(
-        size_of::<Raw<N>>() == size_of::<ec::AffinePoint<N, C>>(),
-        "ec::AffinePoint layout mismatch - upstream type may have changed"
-    );
-    unsafe { core::mem::transmute_copy(&Raw { buffer: coords, identity: false }) }
-}
 
 /// The base field of curve `C` (used for point coordinates).
 pub type BaseField<C, const N: usize> = Fp<<C as SWCurveConfig<N>>::BaseFieldConfig, N>;
@@ -44,42 +26,42 @@ pub trait SWCurveConfig<const N: usize>: Send + Sync + 'static + Sized {
     /// Subgroup membership check. Default checks `[order]P == O`.
     /// Override for curves with cofactor 1 (where this is always true).
     fn is_in_correct_subgroup(p: &AffinePoint<Self, N>) -> bool {
-        let mut result = AffinePoint::IDENTITY;
-        p.inner.mul(&Self::ScalarFieldConfig::MODULUS.0, &mut result.inner);
-        result.is_identity()
+        (p * Unreduced::wrap_ref(&Self::ScalarFieldConfig::MODULUS)).is_identity()
     }
 }
 
-// --- Bridge to bigint2 ---
+/// Returns `2P` (point doubling).
+pub trait Double {
+    fn double(&self) -> Self;
+}
 
-// educe avoids unnecessary bounds on `C` that #[derive] would add.
-#[derive(educe::Educe)]
-#[educe(Debug, PartialEq, Eq, Hash)]
-pub(crate) struct CurveBridge<C, const N: usize>(#[educe(Debug(ignore))] PhantomData<C>);
-
-impl<C: SWCurveConfig<N>, const N: usize> ec::Curve<N> for CurveBridge<C, N> {
-    const CURVE: &'static ec::WeierstrassCurve<N> = &ec::WeierstrassCurve::new(
-        C::BaseFieldConfig::MODULUS.0,
-        C::COEFF_A.to_bigint().0,
-        C::COEFF_B.to_bigint().0,
-    );
+/// Computes `2P` in-place.
+pub trait DoubleAssign {
+    fn double_assign(&mut self);
 }
 
 /// A point on a short Weierstrass curve in affine coordinates `(x, y)`.
 ///
-/// Supports addition, subtraction, doubling, and scalar multiplication via operator overloads
-/// (`+`, `-`, `*`) or explicit `_into` methods. The `_into` methods write the result into `self`,
-/// avoiding temporaries.
+/// `None` represents the point at infinity (identity). `Some([x, y])` stores the coordinates as
+/// [`BigInt`] values.
+///
+/// Supports addition, negation, subtraction, doubling, and scalar multiplication via operator
+/// overloads (`+`, `-`, `*`).
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, PartialEq, Eq, Hash)]
 #[must_use]
 pub struct AffinePoint<C: SWCurveConfig<N>, const N: usize> {
-    inner: ec::AffinePoint<N, CurveBridge<C, N>>,
+    coords: Option<[BigInt<N>; 2]>,
+    _marker: PhantomData<C>,
 }
 
 impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
+    /// Curve parameters `[modulus, a, b]` for the FFI layer.
+    const CURVE_PARAMS: [BigInt<N>; 3] =
+        [C::BaseFieldConfig::MODULUS, C::COEFF_A.to_bigint(), C::COEFF_B.to_bigint()];
+
     /// The point at infinity (additive identity).
-    pub const IDENTITY: Self = Self { inner: ec::AffinePoint::IDENTITY };
+    pub const IDENTITY: Self = Self { coords: None, _marker: PhantomData };
 
     /// The curve's standard generator point.
     pub const GENERATOR: Self = C::GENERATOR;
@@ -88,46 +70,47 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// not in the correct subgroup.
     #[inline]
     pub fn new(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
-        let p = Self { inner: ec::AffinePoint::new_unchecked(x.to_bigint().0, y.to_bigint().0) };
+        let p = Self::new_unchecked(x, y);
         if p.is_on_curve() && p.is_in_correct_subgroup() { Some(p) } else { None }
     }
 
     /// Creates a point from coordinates without validating on-curve or subgroup membership.
     #[inline]
     pub const fn new_unchecked(x: BaseField<C, N>, y: BaseField<C, N>) -> Self {
-        Self { inner: const_affine_point([x.to_bigint().0, y.to_bigint().0]) }
+        Self { coords: Some([x.to_bigint(), y.to_bigint()]), _marker: PhantomData }
     }
 
     /// Returns `true` if this is the point at infinity.
     #[inline]
     #[must_use]
-    pub fn is_identity(&self) -> bool {
-        self.inner.is_identity()
+    pub const fn is_identity(&self) -> bool {
+        self.coords.is_none()
     }
 
     /// Returns the `(x, y)` coordinates, or `None` if this is the identity.
     #[inline]
-    pub fn xy(&self) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
-        self.inner.as_u32s().map(|[x, y]| {
+    pub const fn xy(&self) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
+        match self.coords {
+            None => None,
             // SAFETY: coordinates from the EC syscall are canonical field elements.
-            unsafe {
-                (Fp::from_bigint_unchecked(BigInt(*x)), Fp::from_bigint_unchecked(BigInt(*y)))
+            Some(ref c) => {
+                Some(unsafe { (Fp::from_bigint_unchecked(c[0]), Fp::from_bigint_unchecked(c[1])) })
             }
-        })
+        }
     }
 
     /// Checks `y² = x³ + ax + b` using field arithmetic.
     ///
-    /// Uses [`Unreduced`] for intermediate results and checks canonicality only for the final
-    /// comparison.
+    /// Uses [`Unreduced`] for intermediate results and checks canonicality only for the
+    /// final comparison.
     #[must_use]
     pub fn is_on_curve(&self) -> bool {
-        let Some([x, y]) = self.inner.as_u32s() else {
+        let Some(ref coords) = self.coords else {
             return true; // identity is on every curve
         };
-        // zero-copy cast: &[u32; N] -> &BigInt<N> -> &Unreduced<_, N>
-        let x = Unreduced::wrap_ref(BigInt::wrap_ref(x));
-        let y = Unreduced::wrap_ref(BigInt::wrap_ref(y));
+        // zero-copy cast: &BigInt<N> -> &Unreduced<_, N>
+        let x = Unreduced::wrap_ref(&coords[0]);
+        let y = Unreduced::wrap_ref(&coords[1]);
 
         let lhs = y * y;
 
@@ -149,34 +132,6 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     #[must_use]
     pub fn is_in_correct_subgroup(&self) -> bool {
         C::is_in_correct_subgroup(self)
-    }
-
-    /// Computes `self = a + b`.
-    #[inline]
-    pub fn add_into(&mut self, a: &Self, b: &Self) {
-        a.inner.add(&b.inner, &mut self.inner);
-    }
-
-    /// Computes `self = 2 * a`.
-    #[inline]
-    pub fn double_into(&mut self, a: &Self) {
-        a.inner.double(&mut self.inner);
-    }
-
-    /// Computes `self = a - b`.
-    #[inline]
-    pub fn sub_into(&mut self, a: &Self, b: &Self) {
-        let Some((x, y)) = b.xy() else {
-            *self = *a;
-            return;
-        };
-        self.add_into(a, &Self::new_unchecked(x, -&y));
-    }
-
-    /// Computes `self = [scalar]a` (scalar multiplication).
-    #[inline]
-    pub fn mul_into(&mut self, a: &Self, scalar: &Unreduced<C::ScalarFieldConfig, N>) {
-        a.inner.mul(scalar.as_bigint().as_ref(), &mut self.inner);
     }
 }
 
@@ -229,15 +184,6 @@ mod tests {
     }
 
     #[test]
-    fn const_affine_point_matches_upstream() {
-        let x = [0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
-        let y = [0xaa, 0xbb, 0xcc, 0xdd, 0xee, 0xff, 0x10, 0x20];
-        let from_transmute: ec::AffinePoint<8, CurveBridge<Config, 8>> = const_affine_point([x, y]);
-        let from_upstream = ec::AffinePoint::new_unchecked(x, y);
-        assert_eq!(from_transmute, from_upstream);
-    }
-
-    #[test]
     fn point_validation() {
         let g = Affine::GENERATOR;
         let o = Affine::IDENTITY;
@@ -269,16 +215,24 @@ mod tests {
         assert!((&g - &g).is_identity());
 
         // doubling
-        let mut two_g = Affine::IDENTITY;
-        two_g.double_into(&g);
+        let two_g = g.double();
         assert_eq!(&g + &g, two_g);
 
         // commutativity
         assert_eq!(&g + &two_g, &two_g + &g);
 
+        // negation
+        assert!((-&o).is_identity());
+        assert_eq!(-&g, pt(0, 6)); // -G = 4G (order 5)
+        assert_eq!(&(-&g) + &g, o); // -G + G = O
+
+        // subtraction: 3G - 2G = G
+        let three_g = &g + &two_g;
+        assert_eq!(&three_g - &two_g, g);
+
         // walk the full group: G, 2G, 3G, 4G, 5G=O
         assert_eq!(two_g, pt(2, 5)); // 2G
-        assert_eq!(&g + &two_g, pt(2, 2)); // 3G
+        assert_eq!(three_g, pt(2, 2)); // 3G
         assert_eq!(&two_g + &two_g, pt(0, 6)); // 4G
         assert!((&two_g + &pt(2, 2)).is_identity()); // 2G + 3G = 5G = O
     }
