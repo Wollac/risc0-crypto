@@ -35,6 +35,7 @@ use risc0_bigint2::ffi::{sys_bigint2_3, sys_bigint2_4};
 /// * `lhs` and `rhs` must point to readable, aligned `[BigInt<N>; 2]`.
 /// * `out` must point to writable, aligned `[BigInt<N>; 2]` (need not be initialized).
 /// * `out` may alias `lhs` or `rhs` - the FFI reads all inputs before writing.
+#[inline(always)]
 unsafe fn ec_add_raw<const N: usize>(
     lhs: *const RawCoords<N>,
     rhs: *const RawCoords<N>,
@@ -81,6 +82,7 @@ unsafe fn ec_add_raw<const N: usize>(
 /// * `point` must point to readable, aligned `[BigInt<N>; 2]`.
 /// * `out` must point to writable, aligned `[BigInt<N>; 2]` (need not be initialized).
 /// * `out` may alias `point` - the FFI reads all inputs before writing.
+#[inline(always)]
 unsafe fn ec_double_raw<const N: usize>(
     point: *const RawCoords<N>,
     curve: &[BigInt<N>; 3],
