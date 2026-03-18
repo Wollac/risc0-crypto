@@ -35,12 +35,14 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
    - `Fp` implements `AsRef<Unreduced<P, N>>`, so `Fp` values can be used directly in `Unreduced` arithmetic and as scalars in `AffinePoint * scalar`
 
 3. **`AffinePoint<C, N>`** (`src/curve/`) - Short Weierstrass curve point in affine coordinates.
-   - `SWCurveConfig<N>` trait: implement to define a curve (base/scalar field configs, coefficients A/B, generator)
-   - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul) via `src/curve/ops.rs`
-   - `Double` / `DoubleAssign` traits (exported) for explicit point doubling
-   - EC operations call `ec_add_raw`/`ec_double_raw` in `src/curve/ffi.rs`, which invoke `sys_bigint2_3`/`sys_bigint2_4` directly with pre-compiled circuit blobs (copied from `risc0-bigint2` into `OUT_DIR` by `build.rs`)
+   - `R0CurveConfig<N>` trait: implement to define a new curve (base/scalar field configs, coefficients A/B, generator)
+   - `SWCurveConfig<N>` trait: EC arithmetic interface, provided automatically via blanket impl over `R0CurveConfig`
+   - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul)
+   - Inherent methods `double()` / `double_assign()` for explicit point doubling
+   - Coordinates may not be canonical after arithmetic - access via `xy()` (checks) or `xy_unreduced()` (deferred checks)
+   - EC operations go through `SWCurveConfig::ec_add`/`ec_double` - default impls in `ops.rs` call `sys_bigint2_3`/`sys_bigint2_4` directly with pre-compiled circuit blobs (copied from `risc0-bigint2` into `OUT_DIR` by `build.rs` - see that file for rationale)
 
-4. **`src/field/ops.rs`** - Blanket impl connecting `R0FieldConfig` to `FpConfig` via a private `FieldOps` trait that dispatches to `risc0-bigint2` functions by width (256-bit or 384-bit). Replacing this module is all that's needed to retarget to a different backend.
+4. **Backend modules** (`src/field/ops.rs`, `src/curve/ops.rs`) - Each contains the FFI dispatch and blanket impl for its domain. Replacing either module is all that's needed to retarget to a different backend.
 
 ### Supported Curves (`src/curves/`)
 
@@ -77,6 +79,6 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 
 ## Adding a New Curve
 
-1. Create `src/curves/<name>.rs` with `FqConfig`, `FrConfig`, `Config` (implementing `SWCurveConfig<N>`), and type aliases
+1. Create `src/curves/<name>.rs` with `FqConfig`, `FrConfig`, `Config` (implementing `R0CurveConfig<N>`), and type aliases
 2. Add `pub mod <name>;` to `src/curves/mod.rs`
 3. Include standard tests: `generator_is_valid()` and `mul_group_order_is_identity()`
