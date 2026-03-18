@@ -1,159 +1,178 @@
-use super::{AffinePoint, SWCurveConfig, ffi};
-use crate::{BigInt, BitAccess, Unreduced};
-use core::{
-    marker::PhantomData,
-    mem::MaybeUninit,
-    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
-};
+//! R0VM EC arithmetic backend.
+//!
+//! This module connects [`R0CurveConfig`] to [`SWCurveConfig`] via a blanket impl backed by
+//! direct `sys_bigint2` calls to R0VM EC circuits.
+//!
+//! The EC circuit blobs are copied from risc0-bigint2's source tree by `build.rs` - see that
+//! file for why we bypass risc0-bigint2's EC API.
+//!
+//! Swapping to a different backend (e.g. host, different zkVM) means replacing this module - the
+//! rest of the crate is backend-agnostic.
 
-impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
-    /// Returns `[2]P` (point doubling).
-    #[inline]
-    pub fn double(&self) -> Self {
-        let Some(a_xy) = &self.coords else {
-            return Self::IDENTITY;
-        };
-        // y == 0 means order-2 point: 2P = O (double circuit would divide by zero)
-        if a_xy[1].is_zero() {
-            return Self::IDENTITY;
-        }
+use super::{AffinePoint, R0CurveConfig, RawCoords, SWCurveConfig};
+use crate::{BigInt, Fp, FpConfig};
+use core::ptr;
+use include_bytes_aligned::include_bytes_aligned;
+use risc0_bigint2::ffi::{sys_bigint2_3, sys_bigint2_4};
 
-        unsafe {
-            let mut out = MaybeUninit::uninit();
-            ffi::ec_double_raw(a_xy, &Self::CURVE_PARAMS, out.as_mut_ptr());
-            Self { coords: Some(out.assume_init()), _marker: PhantomData }
-        }
-    }
+/// Computes `out = lhs + rhs` on the curve defined by `curve = [modulus, a, b]`.
+///
+/// Uses the chord rule where `lhs = (x₁, y₁)` and `rhs = (x₂, y₂)`:
+///
+/// ```text
+/// λ  = (y₂ - y₁) / (x₂ - x₁)
+/// x₃ = λ² - x₁ - x₂
+/// y₃ = λ(x₁ - x₃) - y₁
+/// ```
+///
+/// # Preconditions
+///
+/// * `x₁ != x₂` - when equal, the chord formula divides by zero.
+/// * Neither point may be the identity (no affine representation).
+///
+/// # Safety
+///
+/// * `lhs` and `rhs` must point to readable, aligned `[BigInt<N>; 2]`.
+/// * `out` must point to writable, aligned `[BigInt<N>; 2]` (need not be initialized).
+/// * `out` may alias `lhs` or `rhs` - the FFI reads all inputs before writing.
+unsafe fn ec_add_raw<const N: usize>(
+    lhs: *const RawCoords<N>,
+    rhs: *const RawCoords<N>,
+    curve: &[BigInt<N>; 3],
+    out: *mut RawCoords<N>,
+) {
+    const ADD_256: &[u8] = include_bytes_aligned!(4, concat!(env!("OUT_DIR"), "/ec_add_256.blob"));
+    const ADD_384: &[u8] = include_bytes_aligned!(4, concat!(env!("OUT_DIR"), "/ec_add_384.blob"));
 
-    /// Computes `[2]P` in-place.
-    #[inline]
-    pub fn double_assign(&mut self) {
-        let Some(a_xy) = &mut self.coords else {
-            return;
-        };
-        // y == 0 means order-2 point: 2P = O (double circuit would divide by zero)
-        if a_xy[1].is_zero() {
-            self.coords = None;
-            return;
-        }
-        let ptr = core::ptr::from_mut(a_xy);
-        unsafe { ffi::ec_double_raw(ptr, &Self::CURVE_PARAMS, ptr) };
-    }
-}
-
-impl<C: SWCurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
-    type Output = AffinePoint<C, N>;
-
-    #[inline]
-    fn add(self, rhs: Self) -> Self::Output {
-        let (Some(a), Some(b)) = (&self.coords, &rhs.coords) else {
-            return if self.coords.is_some() { *self } else { *rhs };
-        };
-        if a[0] == b[0] {
-            if a[1] != b[1] || a[1].is_zero() {
-                return AffinePoint::IDENTITY;
-            }
-            return self.double();
-        }
-
-        unsafe {
-            let mut out = MaybeUninit::uninit();
-            ffi::ec_add_raw(a, b, &AffinePoint::<C, N>::CURVE_PARAMS, out.as_mut_ptr());
-            AffinePoint { coords: Some(out.assume_init()), _marker: PhantomData }
-        }
+    let blob = match N {
+        8 => ADD_256,
+        12 => ADD_384,
+        _ => panic!("unsupported EC width"),
+    };
+    // SAFETY: caller guarantees pointer validity and preconditions.
+    unsafe {
+        sys_bigint2_4(
+            blob.as_ptr(),
+            lhs.cast(),
+            rhs.cast(),
+            ptr::from_ref(curve).cast(),
+            out.cast(),
+        );
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> AddAssign<&Self> for AffinePoint<C, N> {
-    #[inline]
-    fn add_assign(&mut self, rhs: &Self) {
-        let Some(b_xy) = &rhs.coords else { return };
-        let Some(a_xy) = &mut self.coords else {
-            *self = *rhs;
-            return;
-        };
+/// Computes `out = [2]point` on the curve defined by `curve = [modulus, a, b]`.
+///
+/// Uses the tangent rule where `point = (x₁, y₁)`:
+///
+/// ```text
+/// λ  = (3x₁² + a) / (2y₁)
+/// x₃ = λ² - 2x₁
+/// y₃ = λ(x₁ - x₃) - y₁
+/// ```
+///
+/// # Preconditions
+///
+/// * `y₁ != 0` - when zero, the tangent formula divides by `2y₁`.
+/// * The point may not be the identity (no affine representation).
+///
+/// # Safety
+///
+/// * `point` must point to readable, aligned `[BigInt<N>; 2]`.
+/// * `out` must point to writable, aligned `[BigInt<N>; 2]` (need not be initialized).
+/// * `out` may alias `point` - the FFI reads all inputs before writing.
+unsafe fn ec_double_raw<const N: usize>(
+    point: *const RawCoords<N>,
+    curve: &[BigInt<N>; 3],
+    out: *mut RawCoords<N>,
+) {
+    const DOUBLE_256: &[u8] =
+        include_bytes_aligned!(4, concat!(env!("OUT_DIR"), "/ec_double_256.blob"));
+    const DOUBLE_384: &[u8] =
+        include_bytes_aligned!(4, concat!(env!("OUT_DIR"), "/ec_double_384.blob"));
 
-        if a_xy[0] == b_xy[0] {
-            if a_xy[1] != b_xy[1] || a_xy[1].is_zero() {
-                self.coords = None;
-                return;
-            }
-            self.double_assign();
-            return;
-        }
-
-        let ptr = core::ptr::from_mut(a_xy);
-        unsafe { ffi::ec_add_raw(ptr, b_xy, &Self::CURVE_PARAMS, ptr) };
+    let blob = match N {
+        8 => DOUBLE_256,
+        12 => DOUBLE_384,
+        _ => panic!("unsupported EC width"),
+    };
+    // SAFETY: caller guarantees pointer validity and preconditions.
+    unsafe {
+        sys_bigint2_3(blob.as_ptr(), point.cast(), ptr::from_ref(curve).cast(), out.cast());
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> Neg for &AffinePoint<C, N> {
-    type Output = AffinePoint<C, N>;
-
-    #[inline]
-    fn neg(self) -> AffinePoint<C, N> {
-        match self.xy() {
-            None => AffinePoint::IDENTITY,
-            Some((x, y)) => AffinePoint::new_unchecked(x, -&y),
-        }
-    }
-}
-
-impl<C: SWCurveConfig<N>, const N: usize> Sub for &AffinePoint<C, N> {
-    type Output = AffinePoint<C, N>;
-
-    #[inline]
-    fn sub(self, rhs: Self) -> AffinePoint<C, N> {
-        self + &(-rhs)
-    }
-}
-
-impl<C: SWCurveConfig<N>, const N: usize> SubAssign<&Self> for AffinePoint<C, N> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: &Self) {
-        self.add_assign(&(-rhs));
-    }
-}
-
-impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
-    /// Computes `self = [scalar]a` via MSB-first double-and-add.
-    ///
-    /// Accepts any point on the curve (not necessarily in the prime-order subgroup) and any
-    /// non-negative scalar (including values >= group order).
-    #[inline]
-    pub(crate) fn mul_into(&mut self, a: &Self, scalar: &BigInt<N>) {
-        self.coords = None;
-        if a.is_identity() {
-            return;
-        }
-        for i in (0..scalar.bits()).rev() {
-            self.double_assign();
-            if scalar.bit(i) {
-                self.add_assign(a);
-            }
-        }
-    }
-}
-
-impl<C: SWCurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>> Mul<&T>
-    for &AffinePoint<C, N>
+impl<C: R0CurveConfig<N>, const N: usize> SWCurveConfig<N> for C
+where
+    <C as R0CurveConfig<N>>::BaseFieldConfig: FpConfig<N>,
+    <C as R0CurveConfig<N>>::ScalarFieldConfig: FpConfig<N>,
 {
-    type Output = AffinePoint<C, N>;
+    type BaseFieldConfig = <C as R0CurveConfig<N>>::BaseFieldConfig;
+    type ScalarFieldConfig = <C as R0CurveConfig<N>>::ScalarFieldConfig;
 
-    #[inline]
-    fn mul(self, scalar: &T) -> Self::Output {
-        let mut result = AffinePoint::IDENTITY;
-        result.mul_into(self, scalar.as_ref().as_bigint());
-        result
+    const COEFF_A: Fp<Self::BaseFieldConfig, N> = Self::COEFF_A;
+    const COEFF_B: Fp<Self::BaseFieldConfig, N> = Self::COEFF_B;
+    const GENERATOR: AffinePoint<Self, N> = Self::GENERATOR;
+
+    fn is_in_correct_subgroup(p: &AffinePoint<Self, N>) -> bool {
+        Self::is_in_correct_subgroup(p)
+    }
+
+    #[inline(always)]
+    unsafe fn ec_add(a: *const RawCoords<N>, b: &RawCoords<N>, out: *mut RawCoords<N>) {
+        // SAFETY: caller upholds SWCurveConfig's pointer contract; ec_add_raw forwards to FFI.
+        unsafe { ec_add_raw(a, ptr::from_ref(b), &Self::CURVE_PARAMS, out) }
+    }
+
+    #[inline(always)]
+    unsafe fn ec_double(a: *const RawCoords<N>, out: *mut RawCoords<N>) {
+        // SAFETY: caller upholds SWCurveConfig's pointer contract; ec_double_raw forwards to FFI.
+        unsafe { ec_double_raw(a, &Self::CURVE_PARAMS, out) }
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>>
-    MulAssign<&T> for AffinePoint<C, N>
-{
-    #[inline]
-    fn mul_assign(&mut self, scalar: &T) {
-        let temp = *self;
-        self.mul_into(&temp, scalar.as_ref().as_bigint());
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{bigint, curves::secp256k1};
+
+    type C = secp256k1::Config;
+
+    // G, 2G, 3G for secp256k1 (from noble-curves test vectors)
+    const G: RawCoords<8> = [
+        bigint!("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
+        bigint!("0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"),
+    ];
+    const TWO_G: RawCoords<8> = [
+        bigint!("0xc6047f9441ed7d6d3045406e95c07cd85c778e4b8cef3ca7abac09b95c709ee5"),
+        bigint!("0x1ae168fea63dc339a3c58419466ceaeef7f632653266d0e1236431a950cfe52a"),
+    ];
+    const THREE_G: RawCoords<8> = [
+        bigint!("0xf9308a019258c31049344f85f89d5229b531c845836f99b08601f113bce036f9"),
+        bigint!("0x388f7b0f632de8140fe337e62a37f3566500a99934c2231b6cb9fd7584b8e672"),
+    ];
+
+    #[test]
+    fn ec_add_aliasing() {
+        // G + 2G = 3G, aliasing lhs
+        let mut a = G;
+        let ptr = core::ptr::from_mut(&mut a);
+        unsafe { C::ec_add(ptr, &TWO_G, ptr) };
+        assert_eq!(a, THREE_G);
+
+        // 2G + G = 3G, aliasing lhs
+        let mut a = TWO_G;
+        let ptr = core::ptr::from_mut(&mut a);
+        unsafe { C::ec_add(ptr, &G, ptr) };
+        assert_eq!(a, THREE_G);
+    }
+
+    #[test]
+    fn ec_double_aliasing() {
+        // [2]G = 2G, aliasing input
+        let mut a = G;
+        let ptr = core::ptr::from_mut(&mut a);
+        unsafe { C::ec_double(ptr, ptr) };
+        assert_eq!(a, TWO_G);
     }
 }

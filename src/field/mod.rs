@@ -30,9 +30,10 @@ pub trait R0FieldConfig<const N: usize>: Send + Sync + 'static + Sized {
 /// # Safety
 ///
 /// The `fp_*` methods have the following contract:
+/// * `a` and `b` must point to readable, aligned memory for `Unreduced<Self, N>`.
 /// * `out` must point to writeable, aligned memory for `Unreduced<Self, N>`.
 /// * `out` need not be initialized - the implementation writes all limbs.
-/// * `out` may alias `a` - the implementation reads all inputs before writing.
+/// * `out` may alias `a` or `b` - the implementation reads all inputs before writing.
 /// * Results need not be reduced to `[0, p)`.
 pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
     /// The field modulus `p`.
@@ -53,19 +54,19 @@ pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
     /// Computes `a + b mod p`.
     /// # Safety
     /// See [trait-level docs](Self).
-    unsafe fn fp_add(a: *const Uf<Self, N>, b: &Uf<Self, N>, out: *mut Uf<Self, N>);
+    unsafe fn fp_add(a: *const Uf<Self, N>, b: *const Uf<Self, N>, out: *mut Uf<Self, N>);
     /// Computes `a - b mod p`.
     /// # Safety
     /// See [trait-level docs](Self).
-    unsafe fn fp_sub(a: *const Uf<Self, N>, b: &Uf<Self, N>, out: *mut Uf<Self, N>);
+    unsafe fn fp_sub(a: *const Uf<Self, N>, b: *const Uf<Self, N>, out: *mut Uf<Self, N>);
     /// Computes `a * b mod p`.
     /// # Safety
     /// See [trait-level docs](Self).
-    unsafe fn fp_mul(a: *const Uf<Self, N>, b: &Uf<Self, N>, out: *mut Uf<Self, N>);
+    unsafe fn fp_mul(a: *const Uf<Self, N>, b: *const Uf<Self, N>, out: *mut Uf<Self, N>);
     /// Computes `-a mod p`.
     /// # Safety
     /// See [trait-level docs](Self).
-    unsafe fn fp_neg(a: &Uf<Self, N>, out: *mut Uf<Self, N>);
+    unsafe fn fp_neg(a: *const Uf<Self, N>, out: *mut Uf<Self, N>);
     /// Computes `a⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
     /// # Safety
     /// See [trait-level docs](Self).
@@ -133,7 +134,7 @@ impl<P, const N: usize> Fp<P, N> {
     /// The caller must restore the `< p` invariant before using `self` as `Fp` again
     /// (e.g. via `assert!(self.is_valid())`).
     #[inline]
-    unsafe fn as_unreduced_mut(&mut self) -> &mut Unreduced<P, N> {
+    pub(crate) unsafe fn as_unreduced_mut(&mut self) -> &mut Unreduced<P, N> {
         Unreduced::wrap_mut(&mut self.inner)
     }
 }

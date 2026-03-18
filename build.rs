@@ -1,3 +1,11 @@
+// risc0-bigint2 exposes raw modular arithmetic functions (modadd, modsub, modmul, modinv) but
+// not the EC circuit blobs directly - its EC API wraps them in higher-level functions that don't
+// give us enough control over point representation and identity handling.
+//
+// Work-around: copy the pre-compiled EC circuit blobs from risc0-bigint2's source tree into
+// OUT_DIR at build time, then include_bytes! them in curve/ops.rs. This keeps us automatically
+// in sync with risc0-bigint2 updates without checking in blobs ourselves.
+
 use cargo_metadata::MetadataCommand;
 use std::{env, fs, path::PathBuf};
 

@@ -5,7 +5,7 @@
 //! - Cofactor: `0x396c8c005555e1568c00aaab0000aaab`
 //! - Spec: <https://datatracker.ietf.org/doc/draft-irtf-cfrg-pairing-friendly-curves/>
 
-use crate::{AffinePoint, BigInt, Fp, R0FieldConfig, SWCurveConfig, bigint, fp};
+use crate::{AffinePoint, BigInt, Fp, R0CurveConfig, R0FieldConfig, bigint, fp};
 
 // --- Base field (Fq): coordinates, modulus = q (381 bits) ---
 
@@ -34,7 +34,7 @@ pub type Fr = Fp<FrConfig, 12>;
 
 pub enum Config {}
 
-impl SWCurveConfig<12> for Config {
+impl R0CurveConfig<12> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
 

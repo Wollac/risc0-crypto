@@ -5,7 +5,7 @@
 //! - Cofactor: 1
 //! - Spec: <https://eips.ethereum.org/EIPS/eip-197>
 
-use crate::{AffinePoint, BigInt, Fp, R0FieldConfig, SWCurveConfig, bigint, fp};
+use crate::{AffinePoint, BigInt, Fp, R0CurveConfig, R0FieldConfig, bigint, fp};
 
 // --- Base field (Fq): coordinates, modulus = q ---
 
@@ -33,7 +33,7 @@ pub type Fr = Fp<FrConfig, 8>;
 
 pub enum Config {}
 
-impl SWCurveConfig<8> for Config {
+impl R0CurveConfig<8> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
 

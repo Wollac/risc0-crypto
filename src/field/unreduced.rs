@@ -95,7 +95,7 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
 
     /// Asserts the value is in `[0, p)` and returns an [`Fp`]. Panics otherwise.
     #[inline]
-    pub fn check(self) -> Fp<P, N> {
+    pub const fn check(self) -> Fp<P, N> {
         assert!(self.is_canonical());
         Fp { inner: self.inner, _marker: PhantomData }
     }
@@ -124,6 +124,14 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
         // Adding zero forces reduction via the modular-add syscall
         *self += &P::ZERO;
         assert!(self.is_canonical());
+    }
+
+    /// Computes `-self mod p` in place.
+    #[inline]
+    pub fn neg_in_place(&mut self) {
+        let ptr = ptr::from_mut(self);
+        // SAFETY: a (ptr) aliases out (ptr) per FpConfig's contract.
+        unsafe { P::fp_neg(ptr, ptr) };
     }
 
     /// Computes `self⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
@@ -285,6 +293,9 @@ mod tests {
         let mut r = uf(3);
         r *= &two;
         assert_eq!(r.check(), F::from_u32(6));
+        let mut r = uf(3);
+        r.neg_in_place();
+        assert_eq!(r.check(), F::from_u32(4)); // -3 mod 7
     }
 
     #[test]
