@@ -1,4 +1,4 @@
-use super::{AffinePoint, Double, DoubleAssign, SWCurveConfig, ffi};
+use super::{AffinePoint, SWCurveConfig, ffi};
 use crate::{BigInt, BitAccess, Unreduced};
 use core::{
     marker::PhantomData,
@@ -6,9 +6,10 @@ use core::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-impl<C: SWCurveConfig<N>, const N: usize> Double for AffinePoint<C, N> {
+impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
+    /// Returns `[2]P` (point doubling).
     #[inline]
-    fn double(&self) -> Self {
+    pub fn double(&self) -> Self {
         let Some(a_xy) = &self.coords else {
             return Self::IDENTITY;
         };
@@ -23,11 +24,10 @@ impl<C: SWCurveConfig<N>, const N: usize> Double for AffinePoint<C, N> {
             Self { coords: Some(out.assume_init()), _marker: PhantomData }
         }
     }
-}
 
-impl<C: SWCurveConfig<N>, const N: usize> DoubleAssign for AffinePoint<C, N> {
+    /// Computes `[2]P` in-place.
     #[inline]
-    fn double_assign(&mut self) {
+    pub fn double_assign(&mut self) {
         let Some(a_xy) = &mut self.coords else {
             return;
         };

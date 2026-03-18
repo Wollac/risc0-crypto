@@ -30,16 +30,6 @@ pub trait SWCurveConfig<const N: usize>: Send + Sync + 'static + Sized {
     }
 }
 
-/// Returns `2P` (point doubling).
-pub trait Double {
-    fn double(&self) -> Self;
-}
-
-/// Computes `2P` in-place.
-pub trait DoubleAssign {
-    fn double_assign(&mut self);
-}
-
 /// A point on a short Weierstrass curve in affine coordinates `(x, y)`.
 ///
 /// `None` represents the point at infinity (identity). `Some([x, y])` stores the coordinates as
