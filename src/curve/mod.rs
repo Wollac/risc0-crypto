@@ -1,4 +1,4 @@
-pub(crate) mod ops;
+mod ops;
 
 use crate::{
     BigInt, BitAccess, R0FieldConfig,
