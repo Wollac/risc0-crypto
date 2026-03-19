@@ -35,6 +35,8 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
    - `Fp` implements `AsRef<Unreduced<P, N>>`, so `Fp` values can be used directly in `Unreduced` arithmetic and as scalars in `AffinePoint * scalar`
 
 3. **`AffinePoint<C, N>`** (`src/curve/`) - Short Weierstrass curve point in affine coordinates.
+   - **On-curve invariant**: every `AffinePoint` satisfies `y² = x³ + ax + b` (or is identity). Subgroup membership is not enforced.
+   - Constructors: `new()` (on-curve check), `new_in_subgroup()` (on-curve + subgroup), `unsafe new_unchecked()` (external), `pub(crate) from_xy()` (internal)
    - `R0CurveConfig<N>` trait: implement to define a new curve (base/scalar field configs, coefficients A/B, generator)
    - `SWCurveConfig<N>` trait: EC arithmetic interface, provided automatically via blanket impl over `R0CurveConfig`
    - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul)
