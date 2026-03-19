@@ -1,5 +1,6 @@
 use crate::{BigInt, Fp, FpConfig};
 use core::{
+    cmp::Ordering,
     marker::PhantomData,
     mem::MaybeUninit,
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
@@ -90,6 +91,22 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
             self.inner.is_zero() || self.inner.const_eq(&P::MODULUS)
         } else {
             self.reduce().is_zero()
+        }
+    }
+
+    /// Returns `true` if both represent the same field element. May panic on non-canonical values.
+    #[inline]
+    pub fn check_is_eq(&self, other: &Self) -> bool {
+        match self.inner.cmp(&other.inner) {
+            Ordering::Equal => true,
+            Ordering::Less => {
+                assert!(other.is_canonical());
+                false
+            }
+            Ordering::Greater => {
+                assert!(self.is_canonical());
+                false
+            }
         }
     }
 

@@ -6,6 +6,7 @@ use crate::{
 };
 use bytemuck::TransparentWrapper;
 use core::{
+    hash::{Hash, Hasher},
     marker::PhantomData,
     mem::MaybeUninit,
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
@@ -21,6 +22,7 @@ pub type ScalarField<C, const N: usize> = Fp<<C as SWCurveConfig<N>>::ScalarFiel
 /// Unreduced base field element of curve `C` (used for intermediate coordinate arithmetic).
 type UnreducedBaseField<C, const N: usize> = Unreduced<<C as SWCurveConfig<N>>::BaseFieldConfig, N>;
 
+// TODO: use [Unreduced<P, N>; 2] to prevent raw BigInt comparisons on coordinates
 /// Raw `[x, y]` coordinate pair. May not be reduced to `[0, p)`.
 type RawCoords<const N: usize> = [BigInt<N>; 2];
 
@@ -117,11 +119,13 @@ fn subgroup_check_by_order<C: SWCurveConfig<N>, const N: usize>(p: &AffinePoint<
 /// Supports addition, negation, subtraction, doubling, and scalar multiplication via operator
 /// overloads (`+`, `-`, `*`).
 #[derive(educe::Educe)]
-#[educe(Copy, Clone, PartialEq, Eq, Hash)]
+#[educe(Copy, Clone)]
 #[must_use]
 pub struct AffinePoint<C, const N: usize> {
-    /// `None` represents the point at infinity (identity); coordinates may be unreduced (not in
-    /// `[0, p)`) after arithmetic - access via `xy()` (checks) or `xy_unreduced()`.
+    /// `None` represents the point at infinity (identity). Coordinates are always canonical
+    /// (`< p`) after construction; only arithmetic operations (`+`, `-`, `*`, `double`) may
+    /// produce unreduced results from a dishonest prover. Access via `xy()` (asserts canonical)
+    /// or `xy_unreduced()` (defers check).
     coords: Option<RawCoords<N>>,
     _marker: PhantomData<C>,
 }
@@ -134,6 +138,24 @@ impl<C, const N: usize> core::fmt::Debug for AffinePoint<C, N> {
             }
             None => write!(f, "AffinePoint(Identity)"),
         }
+    }
+}
+
+/// Compares canonical coordinates. Panics if either point has unreduced coordinates (dishonest
+/// prover).
+impl<C: SWCurveConfig<N>, const N: usize> PartialEq for AffinePoint<C, N> {
+    fn eq(&self, other: &Self) -> bool {
+        self.checked_coords() == other.checked_coords()
+    }
+}
+
+impl<C: SWCurveConfig<N>, const N: usize> Eq for AffinePoint<C, N> {}
+
+/// Hashes canonical coordinates. Panics if the point has unreduced coordinates (dishonest
+/// prover).
+impl<C: SWCurveConfig<N>, const N: usize> Hash for AffinePoint<C, N> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.checked_coords().hash(state);
     }
 }
 
@@ -190,6 +212,19 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
         self.coords.is_none()
     }
 
+    /// Asserts both coordinates are canonical (`< p`) and returns a reference to the raw
+    /// coordinate pair. Panics if either coordinate is unreduced (dishonest prover).
+    #[inline]
+    fn checked_coords(&self) -> &Option<RawCoords<N>> {
+        if let Some(ref coords) = self.coords {
+            assert!(
+                Unreduced::<C::BaseFieldConfig, N>::wrap_ref(&coords[0]).is_canonical()
+                    && Unreduced::<C::BaseFieldConfig, N>::wrap_ref(&coords[1]).is_canonical()
+            );
+        }
+        &self.coords
+    }
+
     /// Returns the `(x, y)` coordinates as [`Fp`] values, or `None` for the identity.
     ///
     /// Panics if either coordinate is not in `[0, p)` (dishonest prover).
@@ -233,7 +268,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
         rhs *= x;
         rhs += &C::COEFF_B;
 
-        lhs.check() == rhs.check()
+        lhs.check_is_eq(&rhs)
     }
 
     /// Returns `true` if this point is in the prime-order subgroup.
@@ -257,6 +292,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
             return Self::IDENTITY;
         };
         // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
+        // self-correcting if unreduced: ec_double divides by 2y, circuit fails on y ≡ 0
         if a_xy[1].is_zero() {
             return Self::IDENTITY;
         }
@@ -276,6 +312,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
             return;
         };
         // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
+        // self-correcting if unreduced: ec_double divides by 2y, circuit fails on y ≡ 0
         if a_xy[1].is_zero() {
             self.coords = None;
             return;
@@ -318,9 +355,12 @@ impl<C: SWCurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
         match (&self.coords, &rhs.coords) {
             (_, None) => *self,
             (None, _) => *rhs,
-            // same x: either doubling (P + P) or cancellation (P + (-P))
+            // same x: doubling (P + P) or cancellation (P + (-P))
+            // self-correcting if unreduced: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
             (Some(a_xy), Some(b_xy)) if a_xy[0] == b_xy[0] => {
-                if a_xy[1] == b_xy[1] {
+                if Unreduced::<C::BaseFieldConfig, N>::wrap_ref(&a_xy[1])
+                    .check_is_eq(Unreduced::wrap_ref(&b_xy[1]))
+                {
                     self.double()
                 } else {
                     AffinePoint::IDENTITY
@@ -377,9 +417,12 @@ impl<C: SWCurveConfig<N>, const N: usize> AddAssign<&Self> for AffinePoint<C, N>
         match (&mut self.coords, &rhs.coords) {
             (_, None) => {}
             (None, Some(_)) => *self = *rhs,
-            // same x: either doubling (P + P) or cancellation (P + (-P))
+            // same x: doubling (P + P) or cancellation (P + (-P))
+            // self-correcting if unreduced: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
             (Some(a_xy), Some(b_xy)) if a_xy[0] == b_xy[0] => {
-                if a_xy[1] == b_xy[1] {
+                if Unreduced::<C::BaseFieldConfig, N>::wrap_ref(&a_xy[1])
+                    .check_is_eq(Unreduced::wrap_ref(&b_xy[1]))
+                {
                     self.double_assign();
                 } else {
                     self.coords = None;
