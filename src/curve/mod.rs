@@ -216,11 +216,8 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// coordinate pair. Panics if either coordinate is unreduced (dishonest prover).
     #[inline]
     fn checked_coords(&self) -> &Option<RawCoords<N>> {
-        if let Some(ref coords) = self.coords {
-            assert!(
-                Unreduced::<C::BaseFieldConfig, N>::wrap_ref(&coords[0]).is_canonical()
-                    && Unreduced::<C::BaseFieldConfig, N>::wrap_ref(&coords[1]).is_canonical()
-            );
+        if let Some((x, y)) = self.xy_unreduced() {
+            assert!(x.is_canonical() && y.is_canonical());
         }
         &self.coords
     }
