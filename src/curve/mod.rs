@@ -103,16 +103,25 @@ fn subgroup_check_by_order<C: SWCurveConfig<N>, const N: usize>(p: &AffinePoint<
 
 /// A point on a short Weierstrass curve in affine coordinates `(x, y)`.
 ///
-/// Internally, coordinates may not be in canonical form `[0, p)` after arithmetic operations.
-/// Access them via [`xy`](Self::xy) (validates via [`Unreduced::check`]) or
-/// [`xy_unreduced`](Self::xy_unreduced) for intermediate arithmetic.
+/// # Invariant
 ///
-/// `None` represents the point at infinity (identity). Supports addition, negation, subtraction,
-/// doubling, and scalar multiplication via operator overloads (`+`, `-`, `*`).
+/// Every `AffinePoint` satisfies the curve equation `y² = x³ + ax + b` (or is the identity).
+/// This is enforced by the public constructors: [`new`](Self::new) validates on-curve,
+/// [`new_in_subgroup`](Self::new_in_subgroup) additionally validates subgroup membership, and
+/// [`new_unchecked`](Self::new_unchecked) is `unsafe` requiring the caller to guarantee it.
+/// Arithmetic operations preserve the invariant by construction.
+///
+/// Subgroup membership is *not* enforced - use [`new_in_subgroup`](Self::new_in_subgroup) or
+/// [`is_in_correct_subgroup`](Self::is_in_correct_subgroup) to check explicitly.
+///
+/// Supports addition, negation, subtraction, doubling, and scalar multiplication via operator
+/// overloads (`+`, `-`, `*`).
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, PartialEq, Eq, Hash)]
 #[must_use]
 pub struct AffinePoint<C, const N: usize> {
+    /// `None` represents the point at infinity (identity); coordinates may be unreduced (not in
+    /// `[0, p)`) after arithmetic - access via `xy()` (checks) or `xy_unreduced()`.
     coords: Option<RawCoords<N>>,
     _marker: PhantomData<C>,
 }
@@ -181,9 +190,9 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
         self.coords.is_none()
     }
 
-    /// Returns the `(x, y)` coordinates as checked [`Fp`] values, or `None` for the identity.
+    /// Returns the `(x, y)` coordinates as [`Fp`] values, or `None` for the identity.
     ///
-    /// Panics if either coordinate is not in `[0, p)`.
+    /// Panics if either coordinate is not in `[0, p)` (dishonest prover).
     #[inline]
     pub const fn xy(&self) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
         match self.coords {
@@ -208,7 +217,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
         }
     }
 
-    /// Checks `y² = x³ + ax + b` using field arithmetic.
+    /// Checks whether `(x, y)` satisfies the curve equation `y² = x³ + ax + b`.
     #[must_use]
     pub fn is_on_curve(&self) -> bool {
         let Some((x, y)) = self.xy_unreduced() else {
@@ -277,8 +286,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// Computes `[scalar]self` via MSB-first double-and-add.
     ///
     /// Works for any point on the curve regardless of subgroup. The scalar is interpreted as an
-    /// unsigned integer and may be `>= n` (the group order). Behavior is undefined for points
-    /// not on the curve.
+    /// unsigned integer and may be `>= n` (the group order).
     fn scalar_mul(&self, scalar: &BigInt<N>) -> Self {
         let n = scalar.bits();
         if self.is_identity() || n == 0 {
