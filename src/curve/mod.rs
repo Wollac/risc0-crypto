@@ -256,6 +256,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
         let Some(a_xy) = &self.coords else {
             return Self::IDENTITY;
         };
+        // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
         if a_xy[1].is_zero() {
             return Self::IDENTITY;
         }
@@ -274,6 +275,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
         let Some(a_xy) = &mut self.coords else {
             return;
         };
+        // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
         if a_xy[1].is_zero() {
             self.coords = None;
             return;
