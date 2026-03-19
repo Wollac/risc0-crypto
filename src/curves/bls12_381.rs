@@ -42,7 +42,7 @@ impl R0CurveConfig<12> for Config {
     const COEFF_A: Fq = Fq::ZERO;
     const COEFF_B: Fq = fp!("0x4");
 
-    const GENERATOR: Affine = AffinePoint::new_unchecked(
+    const GENERATOR: Affine = AffinePoint::from_xy(
         fp!(
             "0x17f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb"
         ),

@@ -137,17 +137,41 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// The curve's standard generator point.
     pub const GENERATOR: Self = C::GENERATOR;
 
+    /// Creates a point from coordinates, returning `None` if the point is not on the curve.
+    ///
+    /// Does not check subgroup membership - use [`new_in_subgroup`](Self::new_in_subgroup) for
+    /// that. For curves with cofactor 1, `new` and `new_in_subgroup` are equivalent.
+    #[inline]
+    pub fn new(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
+        let p = Self::from_xy(x, y);
+        if p.is_on_curve() { Some(p) } else { None }
+    }
+
     /// Creates a point from coordinates, returning `None` if the point is not on the curve or
     /// not in the correct subgroup.
     #[inline]
-    pub fn new(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
-        let p = Self::new_unchecked(x, y);
-        if p.is_on_curve() && p.is_in_correct_subgroup() { Some(p) } else { None }
+    pub fn new_in_subgroup(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
+        let p = Self::new(x, y)?;
+        if p.is_in_correct_subgroup() { Some(p) } else { None }
     }
 
     /// Creates a point from coordinates without validating on-curve or subgroup membership.
+    ///
+    /// # Safety
+    ///
+    /// The caller must ensure the point `(x, y)` satisfies the curve equation `y² = x³ + ax + b`.
+    /// Passing an off-curve point to arithmetic operations is undefined behavior at the R0VM
+    /// circuit level.
     #[inline]
-    pub const fn new_unchecked(x: BaseField<C, N>, y: BaseField<C, N>) -> Self {
+    pub const unsafe fn new_unchecked(x: BaseField<C, N>, y: BaseField<C, N>) -> Self {
+        Self::from_xy(x, y)
+    }
+
+    /// Internal unchecked constructor. The crate upholds the on-curve invariant via:
+    /// - hardcoded generator coordinates (validated by tests)
+    /// - arithmetic operations that preserve on-curve by construction
+    #[inline]
+    pub(crate) const fn from_xy(x: BaseField<C, N>, y: BaseField<C, N>) -> Self {
         Self { coords: Some([x.to_bigint(), y.to_bigint()]), _marker: PhantomData }
     }
 
@@ -404,7 +428,7 @@ mod tests {
         type ScalarFieldConfig = FrConfig;
         const COEFF_A: Fq = Fq::from_u32(1);
         const COEFF_B: Fq = Fq::from_u32(1);
-        const GENERATOR: Affine = AffinePoint::new_unchecked(Fq::from_u32(0), Fq::from_u32(1));
+        const GENERATOR: Affine = AffinePoint::from_xy(Fq::from_u32(0), Fq::from_u32(1));
         fn is_in_correct_subgroup(_: &AffinePoint<Self, 8>) -> bool {
             true // cofactor = 1
         }
@@ -412,7 +436,7 @@ mod tests {
     type Affine = AffinePoint<Config, 8>;
 
     fn pt(x: u32, y: u32) -> Affine {
-        AffinePoint::new_unchecked(Fq::from_u32(x), Fq::from_u32(y))
+        AffinePoint::from_xy(Fq::from_u32(x), Fq::from_u32(y))
     }
 
     #[test]
@@ -425,7 +449,7 @@ mod tests {
         assert!(!g.is_identity());
         assert!(o.is_identity());
 
-        // all curve points are accepted
+        // all curve points are accepted by new (on-curve check only)
         assert!(Affine::new(Fq::from_u32(0), Fq::from_u32(1)).is_some());
         assert!(Affine::new(Fq::from_u32(2), Fq::from_u32(5)).is_some());
         assert!(Affine::new(Fq::from_u32(2), Fq::from_u32(2)).is_some());
@@ -433,6 +457,10 @@ mod tests {
 
         // off-curve point is rejected
         assert!(Affine::new(Fq::from_u32(1), Fq::from_u32(1)).is_none());
+
+        // new_in_subgroup also validates (cofactor = 1, so same result)
+        assert!(Affine::new_in_subgroup(Fq::from_u32(0), Fq::from_u32(1)).is_some());
+        assert!(Affine::new_in_subgroup(Fq::from_u32(1), Fq::from_u32(1)).is_none());
     }
 
     #[test]
@@ -466,7 +494,7 @@ mod tests {
         assert_eq!(two_g, pt(2, 5)); // 2G
         assert_eq!(three_g, pt(2, 2)); // 3G
         assert_eq!(&two_g + &two_g, pt(0, 6)); // 4G
-        assert!((&two_g + &pt(2, 2)).is_identity()); // 2G + 3G = 5G = O
+        assert!((&two_g + &three_g).is_identity()); // 2G + 3G = 5G = O
     }
 
     #[test]

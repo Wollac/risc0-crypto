@@ -41,7 +41,7 @@ impl R0CurveConfig<8> for Config {
     const COEFF_A: Fq = Fq::ZERO;
     const COEFF_B: Fq = fp!("0x3");
 
-    const GENERATOR: Affine = AffinePoint::new_unchecked(fp!("0x1"), fp!("0x2"));
+    const GENERATOR: Affine = AffinePoint::from_xy(fp!("0x1"), fp!("0x2"));
 
     fn is_in_correct_subgroup(_p: &AffinePoint<Self, 8>) -> bool {
         true // cofactor = 1
