@@ -86,7 +86,7 @@ impl<P, const N: usize> AsRef<Unreduced<P, N>> for Fp<P, N> {
 
 impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
     /// Returns `true` if the value is in `[0, p)` (i.e. already a valid [`Fp`]).
-    #[inline]
+    #[inline(always)]
     pub const fn is_canonical(&self) -> bool {
         self.inner.const_lt(&P::MODULUS)
     }
@@ -120,10 +120,23 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
     }
 
     /// Asserts the value is in `[0, p)` and returns an [`Fp`]. Panics otherwise.
-    #[inline]
+    #[inline(always)]
     pub const fn check(self) -> Fp<P, N> {
         assert!(self.is_canonical());
         Fp { inner: self.inner, _marker: PhantomData }
+    }
+
+    /// Asserts the value is in `[0, p)` and returns a reference to the value as [`Fp`].
+    /// Panics otherwise. Zero-cost - no copy, just a pointer cast.
+    #[inline(always)]
+    pub fn check_ref(&self) -> &Fp<P, N> {
+        assert!(self.is_canonical());
+        // SAFETY: Unreduced<P, N> and Fp<P, N> are both #[repr(transparent)] over BigInt<N>
+        const {
+            assert!(size_of::<Self>() == size_of::<Fp<P, N>>());
+            assert!(align_of::<Self>() == align_of::<Fp<P, N>>());
+        }
+        unsafe { &*ptr::from_ref(self).cast() }
     }
 
     /// Forces reduction to `[0, p)` and returns an [`Fp`].

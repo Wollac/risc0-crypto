@@ -6,6 +6,7 @@ use crate::{
     BigInt, BitAccess,
     field::{Fp, FpConfig, Unreduced},
 };
+use bytemuck::TransparentWrapper;
 use core::{
     hash::{Hash, Hasher},
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
@@ -73,14 +74,9 @@ pub trait CurveConfig<const N: usize>: Sized + Send + Sync + 'static {
     /// Subgroup membership check. Default checks `[order]P == O`.
     /// Override for curves with cofactor 1 (where this is always true).
     fn is_in_correct_subgroup(p: &AffinePoint<Self, N>) -> bool {
-        subgroup_check_by_order(p)
+        let order = Unreduced::wrap_ref(&Self::ScalarFieldConfig::MODULUS);
+        (p * order).is_identity()
     }
-}
-
-/// Checks `[order]P == O`. Used as the default subgroup check for curves with a cofactor.
-fn subgroup_check_by_order<C: CurveConfig<N>, const N: usize>(p: &AffinePoint<C, N>) -> bool {
-    let order = Unreduced::from_bigint(C::ScalarFieldConfig::MODULUS);
-    (p * &order).is_identity()
 }
 
 /// A point on a short Weierstrass curve in affine coordinates `(x, y)`.
@@ -122,7 +118,7 @@ impl<C: CurveConfig<N>, const N: usize> core::fmt::Debug for AffinePoint<C, N> {
 /// prover).
 impl<C: CurveConfig<N>, const N: usize> PartialEq for AffinePoint<C, N> {
     fn eq(&self, other: &Self) -> bool {
-        self.xy() == other.xy()
+        self.xy_ref() == other.xy_ref()
     }
 }
 
@@ -132,7 +128,7 @@ impl<C: CurveConfig<N>, const N: usize> Eq for AffinePoint<C, N> {}
 /// prover).
 impl<C: CurveConfig<N>, const N: usize> Hash for AffinePoint<C, N> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.xy().hash(state);
+        self.xy_ref().hash(state);
     }
 }
 
@@ -195,11 +191,23 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// Returns the `(x, y)` coordinates as [`Fp`] values, or `None` for the identity.
     ///
     /// Panics if either coordinate is not in `[0, p)` (dishonest prover).
-    #[inline]
+    #[inline(always)]
     pub const fn xy(&self) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
-        match self.coords {
+        match &self.coords {
             None => None,
-            Some([x, y]) => Some((x.check(), y.check())),
+            &Some([x, y]) => Some((x.check(), y.check())),
+        }
+    }
+
+    /// Returns the `(x, y)` coordinates as [`Fp`] references, or `None` for the identity.
+    /// Zero-cost - no copy, just a pointer cast.
+    ///
+    /// Panics if either coordinate is not in `[0, p)` (dishonest prover).
+    #[inline(always)]
+    pub fn xy_ref(&self) -> Option<(&BaseField<C, N>, &BaseField<C, N>)> {
+        match &self.coords {
+            None => None,
+            Some([x, y]) => Some((x.check_ref(), y.check_ref())),
         }
     }
 
