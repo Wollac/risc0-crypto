@@ -5,8 +5,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Build & Development Commands
 
 ```bash
-cargo check                # Type check (~0.08s)
-cargo clippy --lib         # Lint (expect self-convention warnings - intentional for const fn)
+cargo check --tests        # Type check (~0.08s)
+cargo clippy --tests       # Lint (expect self-convention warnings - intentional for const fn)
 cargo +nightly fmt         # Format (requires nightly for rustfmt.toml options)
 cargo doc --lib            # Generate docs
 
@@ -29,7 +29,7 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 
 2. **`Fp<P, N>`** (`src/field/`) - Prime field element generic over a config type `P` and limb count `N`. Type aliases: `Fp256<P>` (N=8, 256-bit) and `Fp384<P>` (N=12, 384-bit).
    - `R0FieldConfig<N>` trait: implement to define a new field (just set `MODULUS`)
-   - `FpConfig<N>` trait: internal dispatch layer with unsafe `fp_*` pointer-based methods; a blanket impl in `ops.rs` derives it from every `R0FieldConfig`
+   - `FpConfig<N>` trait: internal dispatch layer with unsafe `fp_*` pointer-based methods and safe `fp_reduce`; a blanket impl in `ops.rs` derives it from every `R0FieldConfig`
    - Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`
    - For intermediate computations, use `Unreduced<P, N>` (skips canonicality checks), then call `.check()` (assert canonical) or `.reduce()` (force canonical) to convert back to `Fp`
    - `Fp` implements `AsRef<Unreduced<P, N>>`, so `Fp` values can be used directly in `Unreduced` arithmetic and as scalars in `AffinePoint * scalar`
@@ -37,12 +37,12 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 3. **`AffinePoint<C, N>`** (`src/curve/`) - Short Weierstrass curve point in affine coordinates.
    - **On-curve invariant**: every `AffinePoint` satisfies `y² = x³ + ax + b` (or is identity). Subgroup membership is not enforced.
    - Constructors: `new()` (on-curve check), `new_in_subgroup()` (on-curve + subgroup), `unsafe new_unchecked()` (external), `pub(crate) from_xy()` (internal)
-   - `R0CurveConfig<N>` trait: implement to define a new curve (base/scalar field configs, coefficients A/B, generator)
-   - `SWCurveConfig<N>` trait: EC arithmetic interface, provided automatically via blanket impl over `R0CurveConfig`
+   - `CurveConfig<N>` trait: implement to define a new curve (base/scalar field configs, coefficients A/B, generator, `type Ops` for backend)
+   - `CurveOps<C, N>` trait: EC arithmetic interface (`add`, `double` + in-place variants). `R0VMCurveOps` is the R0VM backend.
    - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul)
    - Inherent methods `double()` / `double_assign()` for explicit point doubling
-   - Coordinates may not be canonical after arithmetic - access via `xy()` (checks) or `xy_unreduced()` (deferred checks)
-   - EC operations go through `SWCurveConfig::ec_add`/`ec_double` - default impls in `ops.rs` call `sys_bigint2_3`/`sys_bigint2_4` directly with pre-compiled circuit blobs (copied from `risc0-bigint2` into `OUT_DIR` by `build.rs` - see that file for rationale)
+   - Coordinates may not be canonical after arithmetic - access via `xy()` / `xy_ref()` (check) or `xy_unreduced()` (deferred)
+   - EC operations in `R0VMCurveOps` call `sys_bigint2_3`/`sys_bigint2_4` directly with pre-compiled circuit blobs (copied from `risc0-bigint2` into `OUT_DIR` by `build.rs` - see that file for rationale)
 
 4. **Backend modules** (`src/field/ops.rs`, `src/curve/ops.rs`) - Each contains the FFI dispatch and blanket impl for its domain. Replacing either module is all that's needed to retarget to a different backend.
 
@@ -66,7 +66,7 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 - **Const-time construction**: `fp!()` and `bigint!()` macros validate at compile time
 - **Zero heap allocation**: all types are stack-allocated, `no_std` compatible
 - **Cofactor-1 optimization**: curves with cofactor 1 override `is_in_correct_subgroup()` to return `true`, skipping the expensive `[order]P = O` check
-- **`Unreduced` check vs reduce**: `Unreduced` holds possibly non-canonical field values. Everything is sound inside - arithmetic on non-canonical inputs produces correct field results. When "leaving" the struct (extracting an `Fp` or producing a field-semantic `bool`), there are two strategies: `check()` asserts the value is already canonical (for when it should be), `reduce()` forces it canonical (for when it legitimately might not be, e.g. cross-field reduction in ECDSA). The same applies to comparisons: `check_is_eq()` uses check semantics, `reduce().is_zero()` for reduce-style zero test
+- **`Unreduced` check vs reduce**: `Unreduced` holds possibly non-canonical field values. Arithmetic is always sound inside. When leaving the struct (extracting an `Fp` or producing a field-semantic `bool`), two strategies: `check` asserts the value is already canonical, `reduce` forces it canonical. The same choice applies to comparisons.
 
 ## Style
 
@@ -81,6 +81,6 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 
 ## Adding a New Curve
 
-1. Create `src/curves/<name>.rs` with `FqConfig`, `FrConfig`, `Config` (implementing `R0CurveConfig<N>`), and type aliases
+1. Create `src/curves/<name>.rs` with `FqConfig`, `FrConfig`, `Config` (implementing `CurveConfig<N>`), and type aliases
 2. Add `pub mod <name>;` to `src/curves/mod.rs`
-3. Include standard tests: `generator_is_valid()` and `mul_group_order_is_identity()`
+3. Include standard tests: `discriminant_is_nonzero()`, `generator_is_valid()`, and `mul_group_order_is_identity()`
