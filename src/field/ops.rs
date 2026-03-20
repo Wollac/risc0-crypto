@@ -9,6 +9,7 @@
 use super::Uf;
 use crate::{BigInt, Fp, FpConfig, R0FieldConfig};
 use bytemuck::TransparentWrapper;
+use core::ptr;
 use risc0_bigint2::field::unchecked::{
     modadd_256, modadd_384, modinv_256, modinv_384, modmul_256, modmul_384, modsub_256, modsub_384,
 };
@@ -115,6 +116,12 @@ where
     #[inline]
     unsafe fn fp_inv(a: &Uf<Self, N>, out: *mut Uf<Self, N>) {
         unsafe { FieldOps::inv(a.as_bigint(), &Self::MODULUS, cast_ptr_mut(out)) }
+    }
+
+    #[inline]
+    fn fp_reduce(a: &mut BigInt<N>) {
+        let ptr = ptr::from_mut(a);
+        unsafe { FieldOps::add(ptr, &BigInt::ZERO, &Self::MODULUS, ptr) }
     }
 }
 

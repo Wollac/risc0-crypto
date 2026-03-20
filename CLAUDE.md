@@ -31,7 +31,7 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
    - `R0FieldConfig<N>` trait: implement to define a new field (just set `MODULUS`)
    - `FpConfig<N>` trait: internal dispatch layer with unsafe `fp_*` pointer-based methods; a blanket impl in `ops.rs` derives it from every `R0FieldConfig`
    - Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`
-   - For intermediate computations, use `Unreduced<P, N>` (skips canonicality checks), then call `.check()` to assert the result is in `[0, p)` before converting back to `Fp`
+   - For intermediate computations, use `Unreduced<P, N>` (skips canonicality checks), then call `.check()` (assert canonical) or `.reduce()` (force canonical) to convert back to `Fp`
    - `Fp` implements `AsRef<Unreduced<P, N>>`, so `Fp` values can be used directly in `Unreduced` arithmetic and as scalars in `AffinePoint * scalar`
 
 3. **`AffinePoint<C, N>`** (`src/curve/`) - Short Weierstrass curve point in affine coordinates.
@@ -66,7 +66,7 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 - **Const-time construction**: `fp!()` and `bigint!()` macros validate at compile time
 - **Zero heap allocation**: all types are stack-allocated, `no_std` compatible
 - **Cofactor-1 optimization**: curves with cofactor 1 override `is_in_correct_subgroup()` to return `true`, skipping the expensive `[order]P = O` check
-- **Honest prover checks via `Unreduced::check()`**: `risc0-bigint2` operations always return canonical (reduced) results for an honest prover - only a dishonest prover can produce unreduced output. After chains of `Unreduced` arithmetic, call `.check()` (which asserts `is_canonical()`) to convert back to `Fp`. Do NOT use `.reduce()` instead - that silently fixes non-canonical values and hides dishonest-prover misbehavior
+- **`Unreduced` check vs reduce**: `Unreduced` holds possibly non-canonical field values. Everything is sound inside - arithmetic on non-canonical inputs produces correct field results. When "leaving" the struct (extracting an `Fp` or producing a field-semantic `bool`), there are two strategies: `check()` asserts the value is already canonical (for when it should be), `reduce()` forces it canonical (for when it legitimately might not be, e.g. cross-field reduction in ECDSA). The same applies to comparisons: `check_is_eq()` uses check semantics, `reduce().is_zero()` for reduce-style zero test
 
 ## Style
 

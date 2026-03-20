@@ -29,7 +29,7 @@ pub trait R0FieldConfig<const N: usize>: Sized + Send + Sync + 'static {
 ///
 /// # Safety
 ///
-/// The `fp_*` methods have the following contract:
+/// The unsafe `fp_*` methods have the following pointer contract:
 /// * `a` and `b` must point to readable, aligned memory for `Unreduced<Self, N>`.
 /// * `out` must point to writeable, aligned memory for `Unreduced<Self, N>`.
 /// * `out` need not be initialized - the implementation writes all limbs.
@@ -71,6 +71,8 @@ pub trait FpConfig<const N: usize>: Sized + Send + Sync + 'static {
     /// # Safety
     /// See [trait-level docs](Self).
     unsafe fn fp_inv(a: &Uf<Self, N>, out: *mut Uf<Self, N>);
+    /// Reduces `a` to `[0, p)` in place. The result must be canonical.
+    fn fp_reduce(a: &mut BigInt<N>);
 }
 
 /// An element of the prime field defined by [`P::MODULUS`](FpConfig::MODULUS).
@@ -82,8 +84,9 @@ pub trait FpConfig<const N: usize>: Sized + Send + Sync + 'static {
 /// immediate UB for code that depends on canonicality.
 ///
 /// Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`.
-/// For performance-sensitive chains of arithmetic, use [`Unreduced`] which defers the canonicality
-/// check until you call [`check`](Unreduced::check).
+/// For performance-sensitive chains of arithmetic, use [`Unreduced`] which defers the
+/// canonicality check. Convert back via [`check`](Unreduced::check) (assert canonical) or
+/// [`reduce`](Unreduced::reduce) (force canonical).
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, PartialEq, Eq, Hash)]
 #[must_use]
@@ -288,7 +291,7 @@ impl<P: FpConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
     fn add_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unreduced_mut() += rhs.as_unreduced() };
-        assert!(self.inner.const_lt(&P::MODULUS));
+        assert!(self.inner.const_lt(&P::MODULUS), "non-canonical field element");
     }
 }
 
@@ -297,7 +300,7 @@ impl<P: FpConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
     fn sub_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unreduced_mut() -= rhs.as_unreduced() };
-        assert!(self.inner.const_lt(&P::MODULUS));
+        assert!(self.inner.const_lt(&P::MODULUS), "non-canonical field element");
     }
 }
 
@@ -306,7 +309,7 @@ impl<P: FpConfig<N>, const N: usize> MulAssign<&Self> for Fp<P, N> {
     fn mul_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unreduced_mut() *= rhs.as_unreduced() };
-        assert!(self.inner.const_lt(&P::MODULUS));
+        assert!(self.inner.const_lt(&P::MODULUS), "non-canonical field element");
     }
 }
 

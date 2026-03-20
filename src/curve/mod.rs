@@ -98,10 +98,9 @@ pub trait CurveConfig<const N: usize>: Sized + Send + Sync + 'static {
 #[educe(Copy, Clone)]
 #[must_use]
 pub struct AffinePoint<C: CurveConfig<N>, const N: usize> {
-    /// `None` represents the point at infinity (identity). Coordinates are always canonical
-    /// (`< p`) after construction; only arithmetic operations (`+`, `-`, `*`, `double`) may
-    /// produce unreduced results from a dishonest prover. Access via `xy()` (asserts canonical)
-    /// or `xy_unreduced()` (defers check).
+    /// `None` represents the point at infinity (identity). Coordinates are canonical (`< p`)
+    /// after construction; arithmetic operations may produce non-canonical results. Access via
+    /// `xy()` / `xy_ref()` (check - asserts canonical) or `xy_unreduced()` (defers to caller).
     coords: Option<Coords<C, N>>,
 }
 
@@ -114,8 +113,7 @@ impl<C: CurveConfig<N>, const N: usize> core::fmt::Debug for AffinePoint<C, N> {
     }
 }
 
-/// Compares canonical coordinates. Panics if either point has unreduced coordinates (dishonest
-/// prover).
+/// Compares canonical coordinates. Panics if either point has non-canonical coordinates.
 impl<C: CurveConfig<N>, const N: usize> PartialEq for AffinePoint<C, N> {
     fn eq(&self, other: &Self) -> bool {
         self.xy_ref() == other.xy_ref()
@@ -124,8 +122,7 @@ impl<C: CurveConfig<N>, const N: usize> PartialEq for AffinePoint<C, N> {
 
 impl<C: CurveConfig<N>, const N: usize> Eq for AffinePoint<C, N> {}
 
-/// Hashes canonical coordinates. Panics if the point has unreduced coordinates (dishonest
-/// prover).
+/// Hashes canonical coordinates. Panics if the point has non-canonical coordinates.
 impl<C: CurveConfig<N>, const N: usize> Hash for AffinePoint<C, N> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.xy_ref().hash(state);
@@ -190,7 +187,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
     /// Returns the `(x, y)` coordinates as [`Fp`] values, or `None` for the identity.
     ///
-    /// Panics if either coordinate is not in `[0, p)` (dishonest prover).
+    /// Panics if either coordinate is not in `[0, p)`.
     #[inline(always)]
     pub const fn xy(&self) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
         match &self.coords {
@@ -202,7 +199,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// Returns the `(x, y)` coordinates as [`Fp`] references, or `None` for the identity.
     /// Zero-cost - no copy, just a pointer cast.
     ///
-    /// Panics if either coordinate is not in `[0, p)` (dishonest prover).
+    /// Panics if either coordinate is not in `[0, p)`.
     #[inline(always)]
     pub fn xy_ref(&self) -> Option<(&BaseField<C, N>, &BaseField<C, N>)> {
         match &self.coords {
@@ -264,7 +261,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
             return Self::IDENTITY;
         };
         // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
-        // self-correcting if unreduced: ec_double divides by 2y, circuit fails on y ≡ 0
+        // sound if non-canonical: ec_double divides by 2y, circuit fails on y ≡ 0
         if a_xy[1].as_bigint().is_zero() {
             return Self::IDENTITY;
         }
@@ -278,7 +275,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
             return;
         };
         // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
-        // self-correcting if unreduced: ec_double divides by 2y, circuit fails on y ≡ 0
+        // sound if non-canonical: ec_double divides by 2y, circuit fails on y ≡ 0
         if a_xy[1].as_bigint().is_zero() {
             self.coords = None;
             return;
@@ -320,7 +317,7 @@ impl<C: CurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
             (_, None) => *self,
             (None, _) => *rhs,
             // same x: doubling (P + P) or cancellation (P + (-P))
-            // self-correcting if unreduced: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
+            // sound if non-canonical: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
             (Some(a_xy), Some(b_xy)) if a_xy[0].raw_eq(&b_xy[0]) => {
                 if a_xy[1].check_is_eq(&b_xy[1]) { self.double() } else { AffinePoint::IDENTITY }
             }
@@ -369,7 +366,7 @@ impl<C: CurveConfig<N>, const N: usize> AddAssign<&Self> for AffinePoint<C, N> {
             (_, None) => {}
             (None, Some(_)) => *self = *rhs,
             // same x: doubling (P + P) or cancellation (P + (-P))
-            // self-correcting if unreduced: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
+            // sound if non-canonical: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
             (Some(a_xy), Some(b_xy)) if a_xy[0].raw_eq(&b_xy[0]) => {
                 if a_xy[1].check_is_eq(&b_xy[1]) {
                     self.double_assign();
