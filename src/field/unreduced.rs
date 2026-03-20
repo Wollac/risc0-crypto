@@ -40,6 +40,14 @@ impl<P, const N: usize> Unreduced<P, N> {
     pub const fn to_bigint(self) -> BigInt<N> {
         self.inner
     }
+
+    /// Raw limb equality. Does NOT reduce first - two values representing the same field
+    /// element may compare unequal if either is unreduced. Use [`check_is_eq`](Self::check_is_eq)
+    /// for field equality.
+    #[inline]
+    pub fn raw_eq(&self, other: &Self) -> bool {
+        self.as_bigint() == other.as_bigint()
+    }
 }
 
 impl<P, const N: usize> core::fmt::Debug for Unreduced<P, N> {
@@ -94,7 +102,8 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
         }
     }
 
-    /// Returns `true` if both represent the same field element. May panic on non-canonical values.
+    /// Returns `true` if both represent the same field element. When unequal, asserts the larger
+    /// value is canonical - panics if a dishonest prover produced an unreduced result.
     #[inline]
     pub fn check_is_eq(&self, other: &Self) -> bool {
         match self.inner.cmp(&other.inner) {

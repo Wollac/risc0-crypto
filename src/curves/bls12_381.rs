@@ -5,38 +5,41 @@
 //! - Cofactor: `0x396c8c005555e1568c00aaab0000aaab`
 //! - Spec: <https://datatracker.ietf.org/doc/draft-irtf-cfrg-pairing-friendly-curves/>
 
-use crate::{AffinePoint, BigInt, Fp, R0CurveConfig, R0FieldConfig, bigint, fp};
+use crate::{
+    AffinePoint, BigInt, CurveConfig, Fp, LIMBS_384, R0FieldConfig, R0VMCurveOps, bigint, fp,
+};
 
 // --- Base field (Fq): coordinates, modulus = q (381 bits) ---
 
 pub enum FqConfig {}
 
-impl R0FieldConfig<12> for FqConfig {
-    const MODULUS: BigInt<12> = bigint!(
+impl R0FieldConfig<LIMBS_384> for FqConfig {
+    const MODULUS: BigInt<LIMBS_384> = bigint!(
         "0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab"
     );
 }
 
-pub type Fq = Fp<FqConfig, 12>;
+pub type Fq = Fp<FqConfig, LIMBS_384>;
 
 // --- Scalar field (Fr): scalars, modulus = r (255 bits, zero-padded to 12 limbs) ---
 
 pub enum FrConfig {}
 
-impl R0FieldConfig<12> for FrConfig {
-    const MODULUS: BigInt<12> =
+impl R0FieldConfig<LIMBS_384> for FrConfig {
+    const MODULUS: BigInt<LIMBS_384> =
         bigint!("0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
 }
 
-pub type Fr = Fp<FrConfig, 12>;
+pub type Fr = Fp<FrConfig, LIMBS_384>;
 
 // --- Curve config ---
 
 pub enum Config {}
 
-impl R0CurveConfig<12> for Config {
+impl CurveConfig<LIMBS_384> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
+    type Ops = R0VMCurveOps;
 
     // G1 curve equation: y² = x³ + 4
     const COEFF_A: Fq = Fq::ZERO;
@@ -54,7 +57,7 @@ impl R0CurveConfig<12> for Config {
     // cofactor != 1, use default: [n]P == O
 }
 
-pub type Affine = AffinePoint<Config, 12>;
+pub type Affine = AffinePoint<Config, LIMBS_384>;
 
 #[cfg(test)]
 mod tests {

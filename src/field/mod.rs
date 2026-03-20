@@ -1,7 +1,7 @@
-pub(crate) mod ops;
+mod ops;
 mod unreduced;
 
-use crate::BigInt;
+use crate::{BigInt, LIMBS_256, LIMBS_384};
 use bytemuck::TransparentWrapper;
 use core::{
     marker::PhantomData,
@@ -14,7 +14,7 @@ pub use unreduced::Unreduced;
 type Uf<P, const N: usize> = Unreduced<P, N>;
 
 /// Defines a prime field by its modulus. Implement this trait to introduce a new field.
-pub trait R0FieldConfig<const N: usize>: Send + Sync + 'static + Sized {
+pub trait R0FieldConfig<const N: usize>: Sized + Send + Sync + 'static {
     /// The field modulus `p`.
     const MODULUS: BigInt<N>;
 
@@ -35,7 +35,7 @@ pub trait R0FieldConfig<const N: usize>: Send + Sync + 'static + Sized {
 /// * `out` need not be initialized - the implementation writes all limbs.
 /// * `out` may alias `a` or `b` - the implementation reads all inputs before writing.
 /// * Results need not be reduced to `[0, p)`.
-pub trait FpConfig<const N: usize>: Send + Sync + 'static + Sized {
+pub trait FpConfig<const N: usize>: Sized + Send + Sync + 'static {
     /// The field modulus `p`.
     const MODULUS: BigInt<N>;
 
@@ -93,8 +93,8 @@ pub struct Fp<P, const N: usize> {
     _marker: PhantomData<P>,
 }
 
-pub type Fp256<P> = Fp<P, 8>;
-pub type Fp384<P> = Fp<P, 12>;
+pub type Fp256<P> = Fp<P, LIMBS_256>;
+pub type Fp384<P> = Fp<P, LIMBS_384>;
 
 // --- Pure accessors (no arithmetic, no bounds) ---
 
@@ -134,7 +134,7 @@ impl<P, const N: usize> Fp<P, N> {
     /// The caller must restore the `< p` invariant before using `self` as `Fp` again
     /// (e.g. via `assert!(self.is_valid())`).
     #[inline]
-    pub(crate) unsafe fn as_unreduced_mut(&mut self) -> &mut Unreduced<P, N> {
+    unsafe fn as_unreduced_mut(&mut self) -> &mut Unreduced<P, N> {
         Unreduced::wrap_mut(&mut self.inner)
     }
 }

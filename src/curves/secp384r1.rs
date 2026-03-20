@@ -6,39 +6,42 @@
 //! - Cofactor: 1
 //! - Spec: <https://www.secg.org/sec2-v2.pdf> (section 2.5.1)
 
-use crate::{AffinePoint, BigInt, Fp, R0CurveConfig, R0FieldConfig, bigint, fp};
+use crate::{
+    AffinePoint, BigInt, CurveConfig, Fp, LIMBS_384, R0FieldConfig, R0VMCurveOps, bigint, fp,
+};
 
 // --- Base field (Fq): coordinates, modulus = p ---
 
 pub enum FqConfig {}
 
-impl R0FieldConfig<12> for FqConfig {
-    const MODULUS: BigInt<12> = bigint!(
+impl R0FieldConfig<LIMBS_384> for FqConfig {
+    const MODULUS: BigInt<LIMBS_384> = bigint!(
         "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff"
     );
 }
 
-pub type Fq = Fp<FqConfig, 12>;
+pub type Fq = Fp<FqConfig, LIMBS_384>;
 
 // --- Scalar field (Fr): scalars, modulus = n ---
 
 pub enum FrConfig {}
 
-impl R0FieldConfig<12> for FrConfig {
-    const MODULUS: BigInt<12> = bigint!(
+impl R0FieldConfig<LIMBS_384> for FrConfig {
+    const MODULUS: BigInt<LIMBS_384> = bigint!(
         "0xffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973"
     );
 }
 
-pub type Fr = Fp<FrConfig, 12>;
+pub type Fr = Fp<FrConfig, LIMBS_384>;
 
 // --- Curve config ---
 
 pub enum Config {}
 
-impl R0CurveConfig<12> for Config {
+impl CurveConfig<LIMBS_384> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
+    type Ops = R0VMCurveOps;
 
     // curve equation: y² = x³ - 3x + b
     const COEFF_A: Fq = fp!(
@@ -57,12 +60,13 @@ impl R0CurveConfig<12> for Config {
         ),
     );
 
-    fn is_in_correct_subgroup(_p: &AffinePoint<Self, 12>) -> bool {
+    #[inline(always)]
+    fn is_in_correct_subgroup(_p: &AffinePoint<Self, LIMBS_384>) -> bool {
         true // cofactor = 1
     }
 }
 
-pub type Affine = AffinePoint<Config, 12>;
+pub type Affine = AffinePoint<Config, LIMBS_384>;
 
 #[cfg(test)]
 mod tests {

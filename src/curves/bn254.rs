@@ -5,37 +5,40 @@
 //! - Cofactor: 1
 //! - Spec: <https://eips.ethereum.org/EIPS/eip-197>
 
-use crate::{AffinePoint, BigInt, Fp, R0CurveConfig, R0FieldConfig, bigint, fp};
+use crate::{
+    AffinePoint, BigInt, CurveConfig, Fp, LIMBS_256, R0FieldConfig, R0VMCurveOps, bigint, fp,
+};
 
 // --- Base field (Fq): coordinates, modulus = q ---
 
 pub enum FqConfig {}
 
-impl R0FieldConfig<8> for FqConfig {
-    const MODULUS: BigInt<8> =
+impl R0FieldConfig<LIMBS_256> for FqConfig {
+    const MODULUS: BigInt<LIMBS_256> =
         bigint!("0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47");
 }
 
-pub type Fq = Fp<FqConfig, 8>;
+pub type Fq = Fp<FqConfig, LIMBS_256>;
 
 // --- Scalar field (Fr): scalars, modulus = r ---
 
 pub enum FrConfig {}
 
-impl R0FieldConfig<8> for FrConfig {
-    const MODULUS: BigInt<8> =
+impl R0FieldConfig<LIMBS_256> for FrConfig {
+    const MODULUS: BigInt<LIMBS_256> =
         bigint!("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001");
 }
 
-pub type Fr = Fp<FrConfig, 8>;
+pub type Fr = Fp<FrConfig, LIMBS_256>;
 
 // --- Curve config ---
 
 pub enum Config {}
 
-impl R0CurveConfig<8> for Config {
+impl CurveConfig<LIMBS_256> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
+    type Ops = R0VMCurveOps;
 
     // G1 curve equation: y² = x³ + 3
     const COEFF_A: Fq = Fq::ZERO;
@@ -43,12 +46,13 @@ impl R0CurveConfig<8> for Config {
 
     const GENERATOR: Affine = AffinePoint::from_xy(fp!("0x1"), fp!("0x2"));
 
-    fn is_in_correct_subgroup(_p: &AffinePoint<Self, 8>) -> bool {
+    #[inline(always)]
+    fn is_in_correct_subgroup(_p: &AffinePoint<Self, LIMBS_256>) -> bool {
         true // cofactor = 1
     }
 }
 
-pub type Affine = AffinePoint<Config, 8>;
+pub type Affine = AffinePoint<Config, LIMBS_256>;
 
 #[cfg(test)]
 mod tests {

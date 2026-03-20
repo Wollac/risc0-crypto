@@ -1,73 +1,73 @@
 mod ops;
 
+pub use ops::R0VMCurveOps;
+
 use crate::{
-    BigInt, BitAccess, R0FieldConfig,
+    BigInt, BitAccess,
     field::{Fp, FpConfig, Unreduced},
 };
-use bytemuck::TransparentWrapper;
 use core::{
     hash::{Hash, Hasher},
-    marker::PhantomData,
-    mem::MaybeUninit,
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
-    ptr,
 };
 
 /// The base field of curve `C` (used for point coordinates).
-pub type BaseField<C, const N: usize> = Fp<<C as SWCurveConfig<N>>::BaseFieldConfig, N>;
+pub type BaseField<C, const N: usize> = Fp<<C as CurveConfig<N>>::BaseFieldConfig, N>;
 
 /// The scalar field of curve `C` (used for scalar multiplication).
-pub type ScalarField<C, const N: usize> = Fp<<C as SWCurveConfig<N>>::ScalarFieldConfig, N>;
+pub type ScalarField<C, const N: usize> = Fp<<C as CurveConfig<N>>::ScalarFieldConfig, N>;
 
 /// Unreduced base field element of curve `C` (used for intermediate coordinate arithmetic).
-type UnreducedBaseField<C, const N: usize> = Unreduced<<C as SWCurveConfig<N>>::BaseFieldConfig, N>;
+type UnreducedBaseField<C, const N: usize> = Unreduced<<C as CurveConfig<N>>::BaseFieldConfig, N>;
 
-// TODO: use [Unreduced<P, N>; 2] to prevent raw BigInt comparisons on coordinates
-/// Raw `[x, y]` coordinate pair. May not be reduced to `[0, p)`.
-type RawCoords<const N: usize> = [BigInt<N>; 2];
+/// An `[x, y]` coordinate pair as unreduced base field elements. May not be in `[0, p)`.
+pub type Coords<C, const N: usize> = [UnreducedBaseField<C, N>; 2];
 
-/// Defines a short Weierstrass curve for the R0VM backend. Implement this trait to introduce a
-/// new curve; [`SWCurveConfig`] is provided automatically via a blanket impl.
-pub trait R0CurveConfig<const N: usize>: Send + Sync + 'static + Sized {
-    type BaseFieldConfig: R0FieldConfig<N>;
-    type ScalarFieldConfig: R0FieldConfig<N>;
+/// EC arithmetic operations for a short Weierstrass curve.
+pub trait CurveOps<C: CurveConfig<N>, const N: usize>: Send + Sync + 'static {
+    /// Computes `a + b` on the curve (chord rule).
+    ///
+    /// # Preconditions
+    ///
+    /// The caller must ensure `x₁ != x₂`. When `x₁ == x₂` the chord formula divides by zero.
+    /// Handle same-x cases (doubling, inverse) before calling.
+    fn add(a: &Coords<C, N>, b: &Coords<C, N>) -> Coords<C, N>;
 
-    const COEFF_A: Fp<Self::BaseFieldConfig, N>;
-    const COEFF_B: Fp<Self::BaseFieldConfig, N>;
-    const GENERATOR: AffinePoint<Self, N>;
+    /// In-place version of [`add`](Self::add). Same preconditions apply.
+    fn add_assign(a: &mut Coords<C, N>, b: &Coords<C, N>) {
+        *a = Self::add(a, b);
+    }
 
-    /// Curve parameters `[modulus, a, b]` for the R0VM EC circuits.
-    const CURVE_PARAMS: [BigInt<N>; 3] =
-        [Self::BaseFieldConfig::MODULUS, Self::COEFF_A.to_bigint(), Self::COEFF_B.to_bigint()];
+    /// Computes `[2]a` on the curve (tangent rule).
+    ///
+    /// # Preconditions
+    ///
+    /// The caller must ensure `y != 0`. When `y == 0` the tangent formula divides by `2y`.
+    fn double(a: &Coords<C, N>) -> Coords<C, N>;
 
-    /// Subgroup membership check. Default checks `[order]P == O`.
-    /// Override for curves with cofactor 1 (where this is always true).
-    fn is_in_correct_subgroup(p: &AffinePoint<Self, N>) -> bool
-    where
-        Self: SWCurveConfig<N>,
-    {
-        subgroup_check_by_order(p)
+    /// In-place version of [`double`](Self::double). Same preconditions apply.
+    fn double_assign(a: &mut Coords<C, N>) {
+        *a = Self::double(a);
     }
 }
 
 /// EC arithmetic for a short Weierstrass curve `y² = x³ + ax + b`.
 ///
-/// Provided automatically via a blanket impl over [`R0CurveConfig`]. Implement directly (instead
-/// of [`R0CurveConfig`]) to use a different backend for `ec_add`/`ec_double`.
-///
-/// # Safety
-///
-/// The `ec_*` methods have the following contract:
-/// * `out` must point to writeable, aligned memory for `[BigInt<N>; 2]`.
-/// * `out` need not be initialized - the implementation writes all coordinates.
-/// * `out` may alias the first operand - the implementation reads all inputs before writing.
-/// * Results need not be reduced to `[0, p)`.
-pub trait SWCurveConfig<const N: usize>: Send + Sync + 'static + Sized {
+/// Implement this trait to define a new curve. EC operations are delegated to the associated
+/// [`Ops`](Self::Ops) type, which implements [`CurveOps`].
+pub trait CurveConfig<const N: usize>: Sized + Send + Sync + 'static {
+    /// Base field config (coordinates).
     type BaseFieldConfig: FpConfig<N>;
+    /// Scalar field config (scalar multiplication).
     type ScalarFieldConfig: FpConfig<N>;
+    /// EC arithmetic backend. Use [`R0VMCurveOps`] for the R0VM target.
+    type Ops: CurveOps<Self, N>;
 
+    /// Coefficient `a` in `y² = x³ + ax + b`.
     const COEFF_A: BaseField<Self, N>;
+    /// Coefficient `b` in `y² = x³ + ax + b`.
     const COEFF_B: BaseField<Self, N>;
+    /// Standard generator point.
     const GENERATOR: AffinePoint<Self, N>;
 
     /// Subgroup membership check. Default checks `[order]P == O`.
@@ -75,32 +75,12 @@ pub trait SWCurveConfig<const N: usize>: Send + Sync + 'static + Sized {
     fn is_in_correct_subgroup(p: &AffinePoint<Self, N>) -> bool {
         subgroup_check_by_order(p)
     }
-
-    /// Computes `out = a + b` on the curve (chord rule).
-    ///
-    /// # Preconditions
-    ///
-    /// The caller must ensure `x₁ != x₂`. When `x₁ == x₂` the chord formula divides by zero.
-    /// Handle same-x cases (doubling, inverse) before calling.
-    ///
-    /// # Safety
-    /// See [trait-level docs](Self).
-    unsafe fn ec_add(a: *const RawCoords<N>, b: &RawCoords<N>, out: *mut RawCoords<N>);
-
-    /// Computes `out = [2]a` on the curve (tangent rule).
-    ///
-    /// # Preconditions
-    ///
-    /// The caller must ensure `y != 0`. When `y == 0` the tangent formula divides by `2y`.
-    ///
-    /// # Safety
-    /// See [trait-level docs](Self).
-    unsafe fn ec_double(a: *const RawCoords<N>, out: *mut RawCoords<N>);
 }
 
 /// Checks `[order]P == O`. Used as the default subgroup check for curves with a cofactor.
-fn subgroup_check_by_order<C: SWCurveConfig<N>, const N: usize>(p: &AffinePoint<C, N>) -> bool {
-    (p * Unreduced::wrap_ref(&C::ScalarFieldConfig::MODULUS)).is_identity()
+fn subgroup_check_by_order<C: CurveConfig<N>, const N: usize>(p: &AffinePoint<C, N>) -> bool {
+    let order = Unreduced::from_bigint(C::ScalarFieldConfig::MODULUS);
+    (p * &order).is_identity()
 }
 
 /// A point on a short Weierstrass curve in affine coordinates `(x, y)`.
@@ -121,49 +101,46 @@ fn subgroup_check_by_order<C: SWCurveConfig<N>, const N: usize>(p: &AffinePoint<
 #[derive(educe::Educe)]
 #[educe(Copy, Clone)]
 #[must_use]
-pub struct AffinePoint<C, const N: usize> {
+pub struct AffinePoint<C: CurveConfig<N>, const N: usize> {
     /// `None` represents the point at infinity (identity). Coordinates are always canonical
     /// (`< p`) after construction; only arithmetic operations (`+`, `-`, `*`, `double`) may
     /// produce unreduced results from a dishonest prover. Access via `xy()` (asserts canonical)
     /// or `xy_unreduced()` (defers check).
-    coords: Option<RawCoords<N>>,
-    _marker: PhantomData<C>,
+    coords: Option<Coords<C, N>>,
 }
 
-impl<C, const N: usize> core::fmt::Debug for AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> core::fmt::Debug for AffinePoint<C, N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match &self.coords {
-            Some(coords) => {
-                f.debug_struct("AffinePoint").field("x", &coords[0]).field("y", &coords[1]).finish()
-            }
             None => write!(f, "AffinePoint(Identity)"),
+            Some([x, y]) => f.debug_struct("AffinePoint").field("x", x).field("y", y).finish(),
         }
     }
 }
 
 /// Compares canonical coordinates. Panics if either point has unreduced coordinates (dishonest
 /// prover).
-impl<C: SWCurveConfig<N>, const N: usize> PartialEq for AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> PartialEq for AffinePoint<C, N> {
     fn eq(&self, other: &Self) -> bool {
-        self.checked_coords() == other.checked_coords()
+        self.xy() == other.xy()
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> Eq for AffinePoint<C, N> {}
+impl<C: CurveConfig<N>, const N: usize> Eq for AffinePoint<C, N> {}
 
 /// Hashes canonical coordinates. Panics if the point has unreduced coordinates (dishonest
 /// prover).
-impl<C: SWCurveConfig<N>, const N: usize> Hash for AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> Hash for AffinePoint<C, N> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        self.checked_coords().hash(state);
+        self.xy().hash(state);
     }
 }
 
-// --- Typed accessors and validation (requires SWCurveConfig) ---
+// --- Accessors and validation ---
 
-impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// The point at infinity (additive identity).
-    pub const IDENTITY: Self = Self { coords: None, _marker: PhantomData };
+    pub const IDENTITY: Self = Self { coords: None };
 
     /// The curve's standard generator point.
     pub const GENERATOR: Self = C::GENERATOR;
@@ -172,7 +149,6 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     ///
     /// Does not check subgroup membership - use [`new_in_subgroup`](Self::new_in_subgroup) for
     /// that. For curves with cofactor 1, `new` and `new_in_subgroup` are equivalent.
-    #[inline]
     pub fn new(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
         let p = Self::from_xy(x, y);
         if p.is_on_curve() { Some(p) } else { None }
@@ -180,7 +156,6 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
     /// Creates a point from coordinates, returning `None` if the point is not on the curve or
     /// not in the correct subgroup.
-    #[inline]
     pub fn new_in_subgroup(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
         let p = Self::new(x, y)?;
         if p.is_in_correct_subgroup() { Some(p) } else { None }
@@ -203,23 +178,18 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// - arithmetic operations that preserve on-curve by construction
     #[inline]
     pub(crate) const fn from_xy(x: BaseField<C, N>, y: BaseField<C, N>) -> Self {
-        Self { coords: Some([x.to_bigint(), y.to_bigint()]), _marker: PhantomData }
+        Self {
+            coords: Some([
+                Unreduced::from_bigint(x.to_bigint()),
+                Unreduced::from_bigint(y.to_bigint()),
+            ]),
+        }
     }
 
     /// Returns `true` if this is the point at infinity.
     #[inline]
     pub const fn is_identity(&self) -> bool {
         self.coords.is_none()
-    }
-
-    /// Asserts both coordinates are canonical (`< p`) and returns a reference to the raw
-    /// coordinate pair. Panics if either coordinate is unreduced (dishonest prover).
-    #[inline]
-    fn checked_coords(&self) -> &Option<RawCoords<N>> {
-        if let Some((x, y)) = self.xy_unreduced() {
-            assert!(x.is_canonical() && y.is_canonical());
-        }
-        &self.coords
     }
 
     /// Returns the `(x, y)` coordinates as [`Fp`] values, or `None` for the identity.
@@ -229,10 +199,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     pub const fn xy(&self) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
         match self.coords {
             None => None,
-            Some(ref coords) => Some((
-                Unreduced::from_bigint(coords[0]).check(),
-                Unreduced::from_bigint(coords[1]).check(),
-            )),
+            Some([x, y]) => Some((x.check(), y.check())),
         }
     }
 
@@ -240,19 +207,19 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
     ///
     /// Use this for intermediate arithmetic where canonicality checks can be deferred.
     #[inline]
-    pub fn xy_unreduced(&self) -> Option<(&UnreducedBaseField<C, N>, &UnreducedBaseField<C, N>)> {
-        match self.coords {
+    pub const fn xy_unreduced(
+        &self,
+    ) -> Option<(&UnreducedBaseField<C, N>, &UnreducedBaseField<C, N>)> {
+        match &self.coords {
             None => None,
-            Some(ref coords) => {
-                Some((Unreduced::wrap_ref(&coords[0]), Unreduced::wrap_ref(&coords[1])))
-            }
+            Some([x, y]) => Some((x, y)),
         }
     }
 
     /// Checks whether `(x, y)` satisfies the curve equation `y² = x³ + ax + b`.
     #[must_use]
     pub fn is_on_curve(&self) -> bool {
-        let Some((x, y)) = self.xy_unreduced() else {
+        let Some([x, y]) = &self.coords else {
             return true; // identity is on every curve
         };
 
@@ -281,7 +248,7 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
 // --- Arithmetic ---
 
-impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// Computes `[2]self`.
     #[inline]
     pub fn double(&self) -> Self {
@@ -290,16 +257,10 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
         };
         // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
         // self-correcting if unreduced: ec_double divides by 2y, circuit fails on y ≡ 0
-        if a_xy[1].is_zero() {
+        if a_xy[1].as_bigint().is_zero() {
             return Self::IDENTITY;
         }
-
-        // SAFETY: out is fully written by ec_double before assume_init.
-        unsafe {
-            let mut out = MaybeUninit::uninit();
-            C::ec_double(a_xy, out.as_mut_ptr());
-            Self { coords: Some(out.assume_init()), _marker: PhantomData }
-        }
+        Self { coords: Some(C::Ops::double(a_xy)) }
     }
 
     /// Computes `[2]self` in place.
@@ -310,13 +271,11 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
         };
         // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
         // self-correcting if unreduced: ec_double divides by 2y, circuit fails on y ≡ 0
-        if a_xy[1].is_zero() {
+        if a_xy[1].as_bigint().is_zero() {
             self.coords = None;
             return;
         }
-        let ptr = ptr::from_mut(a_xy);
-        // SAFETY: a (ptr) aliases out (ptr) per SWCurveConfig's contract.
-        unsafe { C::ec_double(ptr, ptr) };
+        C::Ops::double_assign(a_xy);
     }
 
     /// Computes `[scalar]self` via MSB-first double-and-add.
@@ -341,10 +300,10 @@ impl<C: SWCurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
 // --- Operator impls ---
 //
-// - &ref Op &ref: new output via MaybeUninit
-// - val OpAssign &ref: in-place via aliased pointer
+// - &ref Op &ref: new output via CurveOps::ec_*
+// - val OpAssign &ref: in-place via CurveOps::ec_*_assign
 
-impl<C: SWCurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
     type Output = AffinePoint<C, N>;
 
     #[inline]
@@ -354,28 +313,15 @@ impl<C: SWCurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
             (None, _) => *rhs,
             // same x: doubling (P + P) or cancellation (P + (-P))
             // self-correcting if unreduced: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
-            (Some(a_xy), Some(b_xy)) if a_xy[0] == b_xy[0] => {
-                if Unreduced::<C::BaseFieldConfig, N>::wrap_ref(&a_xy[1])
-                    .check_is_eq(Unreduced::wrap_ref(&b_xy[1]))
-                {
-                    self.double()
-                } else {
-                    AffinePoint::IDENTITY
-                }
+            (Some(a_xy), Some(b_xy)) if a_xy[0].raw_eq(&b_xy[0]) => {
+                if a_xy[1].check_is_eq(&b_xy[1]) { self.double() } else { AffinePoint::IDENTITY }
             }
-            (Some(a_xy), Some(b_xy)) => {
-                // SAFETY: out is fully written by ec_add before assume_init.
-                unsafe {
-                    let mut out = MaybeUninit::uninit();
-                    C::ec_add(a_xy, b_xy, out.as_mut_ptr());
-                    AffinePoint { coords: Some(out.assume_init()), _marker: PhantomData }
-                }
-            }
+            (Some(a_xy), Some(b_xy)) => AffinePoint { coords: Some(C::Ops::add(a_xy, b_xy)) },
         }
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> Sub for &AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> Sub for &AffinePoint<C, N> {
     type Output = AffinePoint<C, N>;
 
     #[inline]
@@ -384,7 +330,7 @@ impl<C: SWCurveConfig<N>, const N: usize> Sub for &AffinePoint<C, N> {
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>> Mul<&T>
+impl<C: CurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>> Mul<&T>
     for &AffinePoint<C, N>
 {
     type Output = AffinePoint<C, N>;
@@ -395,20 +341,20 @@ impl<C: SWCurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfi
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> Neg for &AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> Neg for &AffinePoint<C, N> {
     type Output = AffinePoint<C, N>;
 
     #[inline]
     fn neg(self) -> AffinePoint<C, N> {
         let mut result = *self;
         if let Some(a_xy) = &mut result.coords {
-            Unreduced::<C::BaseFieldConfig, N>::wrap_mut(&mut a_xy[1]).neg_in_place();
+            a_xy[1].neg_in_place();
         }
         result
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> AddAssign<&Self> for AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> AddAssign<&Self> for AffinePoint<C, N> {
     #[inline]
     fn add_assign(&mut self, rhs: &Self) {
         match (&mut self.coords, &rhs.coords) {
@@ -416,33 +362,29 @@ impl<C: SWCurveConfig<N>, const N: usize> AddAssign<&Self> for AffinePoint<C, N>
             (None, Some(_)) => *self = *rhs,
             // same x: doubling (P + P) or cancellation (P + (-P))
             // self-correcting if unreduced: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
-            (Some(a_xy), Some(b_xy)) if a_xy[0] == b_xy[0] => {
-                if Unreduced::<C::BaseFieldConfig, N>::wrap_ref(&a_xy[1])
-                    .check_is_eq(Unreduced::wrap_ref(&b_xy[1]))
-                {
+            (Some(a_xy), Some(b_xy)) if a_xy[0].raw_eq(&b_xy[0]) => {
+                if a_xy[1].check_is_eq(&b_xy[1]) {
                     self.double_assign();
                 } else {
                     self.coords = None;
                 }
             }
             (Some(a_xy), Some(b_xy)) => {
-                let ptr = ptr::from_mut(a_xy);
-                // SAFETY: a_xy (ptr) aliases out (ptr) per SWCurveConfig's contract.
-                unsafe { C::ec_add(ptr, b_xy, ptr) };
+                C::Ops::add_assign(a_xy, b_xy);
             }
         }
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> SubAssign<&Self> for AffinePoint<C, N> {
+impl<C: CurveConfig<N>, const N: usize> SubAssign<&Self> for AffinePoint<C, N> {
     #[inline]
     fn sub_assign(&mut self, rhs: &Self) {
         self.add_assign(&(-rhs));
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>>
-    MulAssign<&T> for AffinePoint<C, N>
+impl<C: CurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>> MulAssign<&T>
+    for AffinePoint<C, N>
 {
     #[inline]
     fn mul_assign(&mut self, scalar: &T) {
@@ -473,9 +415,10 @@ mod tests {
     type Fr = Fp256<FrConfig>;
 
     enum Config {}
-    impl R0CurveConfig<8> for Config {
+    impl CurveConfig<8> for Config {
         type BaseFieldConfig = FqConfig;
         type ScalarFieldConfig = FrConfig;
+        type Ops = R0VMCurveOps;
         const COEFF_A: Fq = Fq::from_u32(1);
         const COEFF_B: Fq = Fq::from_u32(1);
         const GENERATOR: Affine = AffinePoint::from_xy(Fq::from_u32(0), Fq::from_u32(1));

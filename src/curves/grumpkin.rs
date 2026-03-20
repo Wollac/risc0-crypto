@@ -5,7 +5,7 @@
 //! - Cofactor: 1
 //! - Spec: <https://aztecprotocol.github.io/aztec-connect/primitives.html> (section 2: Grumpkin)
 
-use crate::{AffinePoint, R0CurveConfig, fp};
+use crate::{AffinePoint, CurveConfig, LIMBS_256, R0VMCurveOps, fp};
 
 // --- Base field (Fq): coordinates, modulus = p (BN254 scalar field) ---
 pub use super::bn254::{Fr as Fq, FrConfig as FqConfig};
@@ -17,9 +17,10 @@ pub use super::bn254::{Fq as Fr, FqConfig as FrConfig};
 
 pub enum Config {}
 
-impl R0CurveConfig<8> for Config {
+impl CurveConfig<LIMBS_256> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
+    type Ops = R0VMCurveOps;
 
     // curve equation: y² = x³ - 17
     const COEFF_A: Fq = Fq::ZERO;
@@ -30,12 +31,13 @@ impl R0CurveConfig<8> for Config {
         fp!("0x2cf135e7506a45d632d270d45f1181294833fc48d823f272c"),
     );
 
-    fn is_in_correct_subgroup(_p: &AffinePoint<Self, 8>) -> bool {
+    #[inline(always)]
+    fn is_in_correct_subgroup(_p: &AffinePoint<Self, LIMBS_256>) -> bool {
         true // cofactor = 1
     }
 }
 
-pub type Affine = AffinePoint<Config, 8>;
+pub type Affine = AffinePoint<Config, LIMBS_256>;
 
 #[cfg(test)]
 mod tests {
