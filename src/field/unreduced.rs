@@ -77,7 +77,7 @@ impl<P: FpConfig<N>, const N: usize> Unreduced<P, N> {
     /// Asserts the value is in `[0, p)` and returns a reference to the value as [`Fp`]. Panics
     /// otherwise. Zero-cost - no copy, just a pointer cast.
     #[inline(always)]
-    pub fn check_ref(&self) -> &Fp<P, N> {
+    pub const fn check_ref(&self) -> &Fp<P, N> {
         assert!(self.is_canonical(), "non-canonical field element");
         // SAFETY: caller asserted is_canonical
         unsafe { self.as_fp_ref_unchecked() }

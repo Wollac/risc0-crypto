@@ -104,32 +104,7 @@ pub struct AffinePoint<C: CurveConfig<N>, const N: usize> {
     coords: Option<Coords<C, N>>,
 }
 
-impl<C: CurveConfig<N>, const N: usize> core::fmt::Debug for AffinePoint<C, N> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match &self.coords {
-            None => write!(f, "AffinePoint(Identity)"),
-            Some([x, y]) => f.debug_struct("AffinePoint").field("x", x).field("y", y).finish(),
-        }
-    }
-}
-
-/// Compares canonical coordinates. Panics if either point has non-canonical coordinates.
-impl<C: CurveConfig<N>, const N: usize> PartialEq for AffinePoint<C, N> {
-    fn eq(&self, other: &Self) -> bool {
-        self.xy_ref() == other.xy_ref()
-    }
-}
-
-impl<C: CurveConfig<N>, const N: usize> Eq for AffinePoint<C, N> {}
-
-/// Hashes canonical coordinates. Panics if the point has non-canonical coordinates.
-impl<C: CurveConfig<N>, const N: usize> Hash for AffinePoint<C, N> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        self.xy_ref().hash(state);
-    }
-}
-
-// --- Accessors and validation ---
+// --- Constants and constructors ---
 
 impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// The point at infinity (additive identity).
@@ -201,7 +176,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     ///
     /// Panics if either coordinate is not in `[0, p)`.
     #[inline(always)]
-    pub fn xy_ref(&self) -> Option<(&BaseField<C, N>, &BaseField<C, N>)> {
+    pub const fn xy_ref(&self) -> Option<(&BaseField<C, N>, &BaseField<C, N>)> {
         match &self.coords {
             None => None,
             Some([x, y]) => Some((x.check_ref(), y.check_ref())),
@@ -211,7 +186,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// Returns the `(x, y)` coordinates as [`Unreduced`] references, or `None` for the identity.
     ///
     /// Use this for intermediate arithmetic where canonicality checks can be deferred.
-    #[inline]
+    #[inline(always)]
     pub const fn xy_unreduced(
         &self,
     ) -> Option<(&UnreducedBaseField<C, N>, &UnreducedBaseField<C, N>)> {
@@ -249,11 +224,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     pub fn is_in_correct_subgroup(&self) -> bool {
         C::is_in_correct_subgroup(self)
     }
-}
 
-// --- Arithmetic ---
-
-impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// Computes `[2]self`.
     #[inline]
     pub fn double(&self) -> Self {
@@ -303,10 +274,49 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     }
 }
 
+// --- Std trait impls ---
+
+impl<C: CurveConfig<N>, const N: usize> core::fmt::Debug for AffinePoint<C, N> {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match &self.coords {
+            None => write!(f, "AffinePoint(Identity)"),
+            Some([x, y]) => f.debug_struct("AffinePoint").field("x", x).field("y", y).finish(),
+        }
+    }
+}
+
+/// Compares canonical coordinates. Panics if either point has non-canonical coordinates.
+impl<C: CurveConfig<N>, const N: usize> PartialEq for AffinePoint<C, N> {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        self.xy_ref() == other.xy_ref()
+    }
+}
+
+impl<C: CurveConfig<N>, const N: usize> Eq for AffinePoint<C, N> {}
+
+/// Hashes canonical coordinates. Panics if the point has non-canonical coordinates.
+impl<C: CurveConfig<N>, const N: usize> Hash for AffinePoint<C, N> {
+    #[inline]
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.xy_ref().hash(state);
+    }
+}
+
 // --- Operator impls ---
-//
-// - &ref Op &ref: new output via CurveOps::ec_*
-// - val OpAssign &ref: in-place via CurveOps::ec_*_assign
+
+impl<C: CurveConfig<N>, const N: usize> Neg for &AffinePoint<C, N> {
+    type Output = AffinePoint<C, N>;
+
+    #[inline]
+    fn neg(self) -> AffinePoint<C, N> {
+        let mut result = *self;
+        if let Some(a_xy) = &mut result.coords {
+            a_xy[1].neg_in_place();
+        }
+        result
+    }
+}
 
 impl<C: CurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
     type Output = AffinePoint<C, N>;
@@ -323,39 +333,6 @@ impl<C: CurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
             }
             (Some(a_xy), Some(b_xy)) => AffinePoint { coords: Some(C::Ops::add(a_xy, b_xy)) },
         }
-    }
-}
-
-impl<C: CurveConfig<N>, const N: usize> Sub for &AffinePoint<C, N> {
-    type Output = AffinePoint<C, N>;
-
-    #[inline]
-    fn sub(self, rhs: Self) -> AffinePoint<C, N> {
-        self + &(-rhs)
-    }
-}
-
-impl<C: CurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>> Mul<&T>
-    for &AffinePoint<C, N>
-{
-    type Output = AffinePoint<C, N>;
-
-    #[inline]
-    fn mul(self, scalar: &T) -> Self::Output {
-        self.scalar_mul(scalar.as_ref().as_bigint())
-    }
-}
-
-impl<C: CurveConfig<N>, const N: usize> Neg for &AffinePoint<C, N> {
-    type Output = AffinePoint<C, N>;
-
-    #[inline]
-    fn neg(self) -> AffinePoint<C, N> {
-        let mut result = *self;
-        if let Some(a_xy) = &mut result.coords {
-            a_xy[1].neg_in_place();
-        }
-        result
     }
 }
 
@@ -381,10 +358,30 @@ impl<C: CurveConfig<N>, const N: usize> AddAssign<&Self> for AffinePoint<C, N> {
     }
 }
 
+impl<C: CurveConfig<N>, const N: usize> Sub for &AffinePoint<C, N> {
+    type Output = AffinePoint<C, N>;
+
+    #[inline]
+    fn sub(self, rhs: Self) -> AffinePoint<C, N> {
+        self + &(-rhs)
+    }
+}
+
 impl<C: CurveConfig<N>, const N: usize> SubAssign<&Self> for AffinePoint<C, N> {
     #[inline]
     fn sub_assign(&mut self, rhs: &Self) {
         self.add_assign(&(-rhs));
+    }
+}
+
+impl<C: CurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>> Mul<&T>
+    for &AffinePoint<C, N>
+{
+    type Output = AffinePoint<C, N>;
+
+    #[inline]
+    fn mul(self, scalar: &T) -> Self::Output {
+        self.scalar_mul(scalar.as_ref().as_bigint())
     }
 }
 
