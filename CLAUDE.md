@@ -83,4 +83,4 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 
 1. Create `src/curves/<name>.rs` with `FqConfig`, `FrConfig`, `Config` (implementing `CurveConfig<N>`), and type aliases
 2. Add `pub mod <name>;` to `src/curves/mod.rs`
-3. Include standard tests: `discriminant_is_nonzero()`, `generator_is_valid()`, and `mul_group_order_is_identity()`
+3. Add a `#[cfg(test)] mod tests` block and invoke `curve_sanity_tests!()` (defined in `curves/mod.rs`) for the standard validation tests
