@@ -37,7 +37,7 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 3. **`AffinePoint<C, N>`** (`src/curve/`) - Short Weierstrass curve point in affine coordinates.
    - **On-curve invariant**: every `AffinePoint` satisfies `y² = x³ + ax + b` (or is identity). Subgroup membership is not enforced.
    - Constructors: `new()` (on-curve check), `new_in_subgroup()` (on-curve + subgroup), `unsafe new_unchecked()` (external), `pub(crate) from_xy()` (internal)
-   - `CurveConfig<N>` trait: implement to define a new curve (base/scalar field configs, coefficients A/B, generator, `type Ops` for backend)
+   - `CurveConfig<N>` trait: implement to define a new curve (base/scalar field configs, coefficients A/B, generator, cofactor, `type Ops` for backend)
    - `CurveOps<C, N>` trait: EC arithmetic interface (`add`, `double` + in-place variants). `R0VMCurveOps` is the R0VM backend.
    - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul)
    - Inherent methods `double()` / `double_assign()` for explicit point doubling
@@ -55,7 +55,7 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 | BN254 | 8 | 0 | 3 | 1 |
 | Grumpkin | 8 | 0 | -17 | 1 |
 | secp384r1 | 12 | -3 | ... | 1 |
-| BLS12-381 | 12 | 0 | 4 | has cofactor |
+| BLS12-381 | 12 | 0 | 4 | 0x396c8c...aaab |
 
 Each curve file follows the same pattern: `FqConfig` (base field), `FrConfig` (scalar field), `Config` (curve), and type aliases `Fq`, `Fr`, `Affine`.
 
