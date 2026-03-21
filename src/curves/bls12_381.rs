@@ -74,11 +74,17 @@ mod tests {
 
     #[test]
     fn clear_cofactor_order_3_point() {
-        // (0, 2) is on the curve (0³ + 4 = 4 = 2²) with order 3, not in G1.
-        // 3 | h, so [h](0, 2) = O.
-        let p = Affine::new(fp!("0x0"), fp!("0x2")).expect("should be on curve");
+        // (0, 2) is on the curve (0³ + 4 = 4 = 2²) with order 3, not in G1
+        let mut p = Affine::new(fp!("0x0"), fp!("0x2")).expect("should be on curve");
         assert!(!p.is_in_correct_subgroup());
+
+        // pure torsion: 3 | h, so [h]P = O
         assert!(p.clear_cofactor().is_identity());
+
+        // mixed order (G + torsion): clears to a non-trivial subgroup element
+        p += &Affine::GENERATOR;
+        assert!(!p.is_in_correct_subgroup());
+        assert!(p.clear_cofactor().is_in_correct_subgroup());
     }
 
     /// EIP-2537 - G1 scalar multiplication test vectors: verify [k]G == (x, y).
