@@ -3,7 +3,7 @@ mod ops;
 pub use ops::R0VMCurveOps;
 
 use crate::{
-    BigInt, BitAccess,
+    BitAccess,
     field::{Fp, FpConfig, Unreduced},
 };
 use bytemuck::TransparentWrapper;
@@ -70,12 +70,58 @@ pub trait CurveConfig<const N: usize>: Sized + Send + Sync + 'static {
     const COEFF_B: BaseField<Self, N>;
     /// Standard generator point.
     const GENERATOR: AffinePoint<Self, N>;
+    /// Cofactor `h` of the curve group as little-endian `u32` limbs.
+    ///
+    /// A `&'static [u32]` slice rather than `BigInt<N>` because the cofactor is a plain integer
+    /// with curve-dependent size - not a field element. Using a slice avoids const generic
+    /// proliferation on the trait and feeds directly into scalar multiplication.
+    const COFACTOR: &'static [u32];
 
-    /// Subgroup membership check. Default checks `[order]P == O`.
-    /// Override for curves with cofactor 1 (where this is always true).
+    /// Subgroup membership check. Default returns `true` for cofactor-1 curves, otherwise
+    /// checks `[order]P == O`. Override for curves with more efficient subgroup checks.
     fn is_in_correct_subgroup(p: &AffinePoint<Self, N>) -> bool {
+        if cofactor::is_one::<Self, _>() {
+            return true;
+        }
         let order = Unreduced::wrap_ref(&Self::ScalarFieldConfig::MODULUS);
         (p * order).is_identity()
+    }
+}
+
+mod cofactor {
+    use super::CurveConfig;
+    use crate::BitAccess;
+
+    /// Returns `true` if the cofactor of curve `C` is 1.
+    pub(super) fn is_one<C: CurveConfig<N>, const N: usize>() -> bool {
+        C::COFACTOR[0] == 1 && C::COFACTOR.iter().skip(1).all(|&e| e == 0)
+    }
+
+    /// Returns `true` if the cofactor of curve `C` is odd.
+    pub(super) const fn is_odd<C: CurveConfig<N>, const N: usize>() -> bool {
+        C::COFACTOR[0] & 1 != 0
+    }
+
+    /// [`BitAccess`] adapter for LE `u32` cofactor limbs.
+    /// Private newtype keeps the impl out of the public API.
+    pub(super) struct Bits<'a>(pub &'a [u32]);
+
+    impl BitAccess for Bits<'_> {
+        #[inline]
+        fn bits(&self) -> usize {
+            for i in (0..self.0.len()).rev() {
+                if self.0[i] != 0 {
+                    return (i + 1) * 32 - self.0[i].leading_zeros() as usize;
+                }
+            }
+            0
+        }
+
+        #[inline]
+        fn bit(&self, i: usize) -> bool {
+            let limb = i / 32;
+            limb < self.0.len() && self.0[limb] & (1 << (i % 32)) != 0
+        }
     }
 }
 
@@ -231,10 +277,13 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         let Some(a_xy) = &self.coords else {
             return Self::IDENTITY;
         };
-        // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
-        // sound if non-canonical: ec_double divides by 2y, circuit fails on y ≡ 0
-        if a_xy[1].as_bigint().is_zero() {
-            return Self::IDENTITY;
+        // y == 0 is impossible for on-curve points when the cofactor is odd (no 2-torsion)
+        if !cofactor::is_odd::<C, _>() {
+            // raw is_zero() handles the honest case (y == 0); a dishonest non-canonical
+            // zero (y > 0 but y ≡ 0 mod p) needs no check since ec_double panics on y ≡ 0
+            if a_xy[1].as_bigint().is_zero() {
+                return Self::IDENTITY;
+            }
         }
         Self { coords: Some(C::Ops::double(a_xy)) }
     }
@@ -245,20 +294,34 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         let Some(a_xy) = &mut self.coords else {
             return;
         };
-        // TODO: y == 0 is impossible for on-curve points when the cofactor is odd
-        // sound if non-canonical: ec_double divides by 2y, circuit fails on y ≡ 0
-        if a_xy[1].as_bigint().is_zero() {
-            self.coords = None;
-            return;
+        // y == 0 is impossible for on-curve points when the cofactor is odd (no 2-torsion)
+        if !cofactor::is_odd::<C, _>() {
+            // raw is_zero() handles the honest case (y == 0); a dishonest non-canonical
+            // zero (y > 0 but y ≡ 0 mod p) needs no check since ec_double panics on y ≡ 0
+            if a_xy[1].as_bigint().is_zero() {
+                self.coords = None;
+                return;
+            }
         }
         C::Ops::double_assign(a_xy);
+    }
+
+    /// Maps this point to the prime-order subgroup by computing `[h]self`.
+    ///
+    /// For cofactor-1 curves this is a no-op.
+    #[inline]
+    pub fn clear_cofactor(&self) -> Self {
+        if cofactor::is_one::<C, _>() {
+            return *self;
+        }
+        self.scalar_mul(&cofactor::Bits(C::COFACTOR))
     }
 
     /// Computes `[scalar]self` via MSB-first double-and-add.
     ///
     /// Works for any point on the curve regardless of subgroup. The scalar is interpreted as an
     /// unsigned integer and may be `>= n` (the group order).
-    fn scalar_mul(&self, scalar: &BigInt<N>) -> Self {
+    fn scalar_mul(&self, scalar: &(impl BitAccess + ?Sized)) -> Self {
         let n = scalar.bits();
         if self.is_identity() || n == 0 {
             return Self::IDENTITY;
@@ -397,7 +460,7 @@ impl<C: CurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{R0FieldConfig, field::Fp256};
+    use crate::{BigInt, R0FieldConfig, field::Fp256};
 
     // --- Toy curve: y² = x³ + x + 1 over F_7, order 5 ---
     //
@@ -424,9 +487,7 @@ mod tests {
         const COEFF_A: Fq = Fq::from_u32(1);
         const COEFF_B: Fq = Fq::from_u32(1);
         const GENERATOR: Affine = AffinePoint::from_xy(Fq::from_u32(0), Fq::from_u32(1));
-        fn is_in_correct_subgroup(_: &AffinePoint<Self, 8>) -> bool {
-            true // cofactor = 1
-        }
+        const COFACTOR: &'static [u32] = &[1];
     }
     type Affine = AffinePoint<Config, 8>;
 
@@ -510,5 +571,12 @@ mod tests {
 
         // [2]G matches known point
         assert_eq!(&g * &two, pt(2, 5));
+    }
+
+    #[test]
+    fn clear_cofactor_is_noop_for_cofactor_1() {
+        assert_eq!(Affine::GENERATOR.clear_cofactor(), Affine::GENERATOR);
+        assert_eq!(Affine::IDENTITY.clear_cofactor(), Affine::IDENTITY);
+        assert_eq!(pt(2, 5).clear_cofactor(), pt(2, 5));
     }
 }

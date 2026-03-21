@@ -48,11 +48,7 @@ impl CurveConfig<LIMBS_256> for Config {
         fp!("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
         fp!("0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"),
     );
-
-    #[inline(always)]
-    fn is_in_correct_subgroup(_p: &AffinePoint<Self, LIMBS_256>) -> bool {
-        true // cofactor = 1
-    }
+    const COFACTOR: &'static [u32] = &[1];
 }
 
 pub type Affine = AffinePoint<Config, LIMBS_256>;

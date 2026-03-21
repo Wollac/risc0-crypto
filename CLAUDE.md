@@ -65,7 +65,7 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 
 - **Const-time construction**: `fp!()` and `bigint!()` macros validate at compile time
 - **Zero heap allocation**: all types are stack-allocated, `no_std` compatible
-- **Cofactor-1 optimization**: curves with cofactor 1 override `is_in_correct_subgroup()` to return `true`, skipping the expensive `[order]P = O` check
+- **Cofactor-1 optimization**: `COFACTOR` is a `&'static [u32]` LE slice on `CurveConfig`. Default `is_in_correct_subgroup()` and `clear_cofactor()` check `cofactor_is_one()` at compile time - cofactor-1 curves need no override
 - **`Unreduced` check vs reduce**: `Unreduced` holds possibly non-canonical field values. Arithmetic is always sound inside. When leaving the struct (extracting an `Fp` or producing a field-semantic `bool`), two strategies: `check` asserts the value is already canonical, `reduce` forces it canonical. The same choice applies to comparisons.
 
 ## Style

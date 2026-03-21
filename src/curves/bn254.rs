@@ -45,11 +45,7 @@ impl CurveConfig<LIMBS_256> for Config {
     const COEFF_B: Fq = fp!("0x3");
 
     const GENERATOR: Affine = AffinePoint::from_xy(fp!("0x1"), fp!("0x2"));
-
-    #[inline(always)]
-    fn is_in_correct_subgroup(_p: &AffinePoint<Self, LIMBS_256>) -> bool {
-        true // cofactor = 1
-    }
+    const COFACTOR: &'static [u32] = &[1];
 }
 
 pub type Affine = AffinePoint<Config, LIMBS_256>;

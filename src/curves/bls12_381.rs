@@ -54,7 +54,7 @@ impl CurveConfig<LIMBS_384> for Config {
         ),
     );
 
-    // cofactor != 1, use default: [n]P == O
+    const COFACTOR: &'static [u32] = &[0x0000aaab, 0x8c00aaab, 0x5555e156, 0x396c8c00];
 }
 
 pub type Affine = AffinePoint<Config, LIMBS_384>;
@@ -65,6 +65,21 @@ mod tests {
     use rstest::rstest;
 
     curve_sanity_tests!();
+
+    #[test]
+    fn cofactor_matches_spec() {
+        let expected = BigInt::<4>::from_hex("0x396c8c005555e1568c00aaab0000aaab");
+        assert_eq!(Config::COFACTOR, &expected.0);
+    }
+
+    #[test]
+    fn clear_cofactor_order_3_point() {
+        // (0, 2) is on the curve (0³ + 4 = 4 = 2²) with order 3, not in G1.
+        // 3 | h, so [h](0, 2) = O.
+        let p = Affine::new(fp!("0x0"), fp!("0x2")).expect("should be on curve");
+        assert!(!p.is_in_correct_subgroup());
+        assert!(p.clear_cofactor().is_identity());
+    }
 
     /// EIP-2537 - G1 scalar multiplication test vectors: verify [k]G == (x, y).
     #[rstest]
