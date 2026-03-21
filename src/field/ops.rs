@@ -137,7 +137,7 @@ mod tests {
     #[test]
     fn add_aliasing() {
         let mut a = A;
-        unsafe { FieldOps::add(ptr::from_ref(&a), &B, &M, ptr::from_mut(&mut a)) };
+        unsafe { FieldOps::add(ptr::from_ref(&a), ptr::from_ref(&B), &M, ptr::from_mut(&mut a)) };
         assert_eq!(a, BigInt::from_u32(1)); // (3 + 5) mod 7
 
         let mut b = B;
@@ -148,7 +148,7 @@ mod tests {
     #[test]
     fn sub_aliasing() {
         let mut a = A;
-        unsafe { FieldOps::sub(ptr::from_ref(&a), &B, &M, ptr::from_mut(&mut a)) };
+        unsafe { FieldOps::sub(ptr::from_ref(&a), ptr::from_ref(&B), &M, ptr::from_mut(&mut a)) };
         assert_eq!(a, BigInt::from_u32(5)); // (3 - 5) mod 7
 
         let mut b = B;
@@ -159,7 +159,7 @@ mod tests {
     #[test]
     fn mul_aliasing() {
         let mut a = A;
-        unsafe { FieldOps::mul(ptr::from_ref(&a), &B, &M, ptr::from_mut(&mut a)) };
+        unsafe { FieldOps::mul(ptr::from_ref(&a), ptr::from_ref(&B), &M, ptr::from_mut(&mut a)) };
         assert_eq!(a, BigInt::from_u32(1)); // (3 * 5) mod 7
 
         let mut b = B;
