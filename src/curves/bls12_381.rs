@@ -5,44 +5,47 @@
 //! - Cofactor: `0x396c8c005555e1568c00aaab0000aaab`
 //! - Spec: <https://datatracker.ietf.org/doc/draft-irtf-cfrg-pairing-friendly-curves/>
 
-use crate::{AffinePoint, BigInt, Fp, R0FieldConfig, SWCurveConfig, bigint, fp};
+use crate::{
+    AffinePoint, BigInt, CurveConfig, Fp, LIMBS_384, R0FieldConfig, R0VMCurveOps, bigint, fp,
+};
 
 // --- Base field (Fq): coordinates, modulus = q (381 bits) ---
 
 pub enum FqConfig {}
 
-impl R0FieldConfig<12> for FqConfig {
-    const MODULUS: BigInt<12> = bigint!(
+impl R0FieldConfig<LIMBS_384> for FqConfig {
+    const MODULUS: BigInt<LIMBS_384> = bigint!(
         "0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab"
     );
 }
 
-pub type Fq = Fp<FqConfig, 12>;
+pub type Fq = Fp<FqConfig, LIMBS_384>;
 
 // --- Scalar field (Fr): scalars, modulus = r (255 bits, zero-padded to 12 limbs) ---
 
 pub enum FrConfig {}
 
-impl R0FieldConfig<12> for FrConfig {
-    const MODULUS: BigInt<12> =
+impl R0FieldConfig<LIMBS_384> for FrConfig {
+    const MODULUS: BigInt<LIMBS_384> =
         bigint!("0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
 }
 
-pub type Fr = Fp<FrConfig, 12>;
+pub type Fr = Fp<FrConfig, LIMBS_384>;
 
 // --- Curve config ---
 
 pub enum Config {}
 
-impl SWCurveConfig<12> for Config {
+impl CurveConfig<LIMBS_384> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
+    type Ops = R0VMCurveOps;
 
     // G1 curve equation: y² = x³ + 4
     const COEFF_A: Fq = Fq::ZERO;
     const COEFF_B: Fq = fp!("0x4");
 
-    const GENERATOR: Affine = AffinePoint::new_unchecked(
+    const GENERATOR: Affine = AffinePoint::from_xy(
         fp!(
             "0x17f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb"
         ),
@@ -51,27 +54,37 @@ impl SWCurveConfig<12> for Config {
         ),
     );
 
-    // cofactor != 1, use default: [n]P == O
+    const COFACTOR: &'static [u32] = &[0x0000aaab, 0x8c00aaab, 0x5555e156, 0x396c8c00];
 }
 
-pub type Affine = AffinePoint<Config, 12>;
+pub type Affine = AffinePoint<Config, LIMBS_384>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Unreduced;
     use rstest::rstest;
 
+    curve_sanity_tests!();
+
     #[test]
-    fn generator_is_valid() {
-        assert!(Affine::GENERATOR.is_on_curve());
-        assert!(Affine::GENERATOR.is_in_correct_subgroup());
+    fn cofactor_matches_spec() {
+        let expected = BigInt::<4>::from_hex("0x396c8c005555e1568c00aaab0000aaab");
+        assert_eq!(Config::COFACTOR, &expected.0);
     }
 
     #[test]
-    fn mul_group_order_is_identity() {
-        let order = Unreduced::from_bigint(FrConfig::MODULUS);
-        assert!((&Affine::GENERATOR * &order).is_identity());
+    fn clear_cofactor_order_3_point() {
+        // (0, 2) is on the curve (0³ + 4 = 4 = 2²) with order 3, not in G1
+        let mut p = Affine::new(fp!("0x0"), fp!("0x2")).expect("should be on curve");
+        assert!(!p.is_in_correct_subgroup());
+
+        // pure torsion: 3 | h, so [h]P = O
+        assert!(p.clear_cofactor().is_identity());
+
+        // mixed order (G + torsion): clears to a non-trivial subgroup element
+        p += &Affine::GENERATOR;
+        assert!(!p.is_in_correct_subgroup());
+        assert!(p.clear_cofactor().is_in_correct_subgroup());
     }
 
     /// EIP-2537 - G1 scalar multiplication test vectors: verify [k]G == (x, y).

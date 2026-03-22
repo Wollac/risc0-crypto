@@ -5,71 +5,60 @@
 //! - Cofactor: 1
 //! - Spec: <https://www.secg.org/sec2-v2.pdf> (section 2.4.1)
 
-use crate::{AffinePoint, BigInt, Fp, R0FieldConfig, SWCurveConfig, bigint, fp};
+use crate::{
+    AffinePoint, BigInt, CurveConfig, Fp, LIMBS_256, R0FieldConfig, R0VMCurveOps, bigint, fp,
+};
 
 // --- Base field (Fq): coordinates, modulus = p ---
 
 pub enum FqConfig {}
 
-impl R0FieldConfig<8> for FqConfig {
-    const MODULUS: BigInt<8> =
+impl R0FieldConfig<LIMBS_256> for FqConfig {
+    const MODULUS: BigInt<LIMBS_256> =
         bigint!("0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffefffffc2f");
 }
 
-pub type Fq = Fp<FqConfig, 8>;
+pub type Fq = Fp<FqConfig, LIMBS_256>;
 
 // --- Scalar field (Fr): scalars, modulus = n ---
 
 pub enum FrConfig {}
 
-impl R0FieldConfig<8> for FrConfig {
-    const MODULUS: BigInt<8> =
+impl R0FieldConfig<LIMBS_256> for FrConfig {
+    const MODULUS: BigInt<LIMBS_256> =
         bigint!("0xfffffffffffffffffffffffffffffffebaaedce6af48a03bbfd25e8cd0364141");
 }
 
-pub type Fr = Fp<FrConfig, 8>;
+pub type Fr = Fp<FrConfig, LIMBS_256>;
 
 // --- Curve config ---
 
 pub enum Config {}
 
-impl SWCurveConfig<8> for Config {
+impl CurveConfig<LIMBS_256> for Config {
     type BaseFieldConfig = FqConfig;
     type ScalarFieldConfig = FrConfig;
+    type Ops = R0VMCurveOps;
 
     // curve equation: y² = x³ + 7
     const COEFF_A: Fq = Fq::ZERO;
     const COEFF_B: Fq = fp!("0x7");
 
-    const GENERATOR: Affine = AffinePoint::new_unchecked(
+    const GENERATOR: Affine = AffinePoint::from_xy(
         fp!("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
         fp!("0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"),
     );
-
-    fn is_in_correct_subgroup(_p: &AffinePoint<Self, 8>) -> bool {
-        true // cofactor = 1
-    }
+    const COFACTOR: &'static [u32] = &[1];
 }
 
-pub type Affine = AffinePoint<Config, 8>;
+pub type Affine = AffinePoint<Config, LIMBS_256>;
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::Unreduced;
     use rstest::rstest;
 
-    #[test]
-    fn generator_is_valid() {
-        assert!(Affine::GENERATOR.is_on_curve());
-        assert!(Affine::GENERATOR.is_in_correct_subgroup());
-    }
-
-    #[test]
-    fn mul_group_order_is_identity() {
-        let order = Unreduced::from_bigint(FrConfig::MODULUS);
-        assert!((&Affine::GENERATOR * &order).is_identity());
-    }
+    curve_sanity_tests!();
 
     /// noble-curves/secp256k1 test vectors
     #[rstest]

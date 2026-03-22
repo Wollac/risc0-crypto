@@ -40,7 +40,12 @@ macro_rules! fp {
     };
 }
 
+/// Number of `u32` limbs for a 256-bit value.
+pub const LIMBS_256: usize = 8;
+/// Number of `u32` limbs for a 384-bit value.
+pub const LIMBS_384: usize = 12;
+
 pub use bigint::BigInt;
-pub use curve::{AffinePoint, SWCurveConfig};
+pub use curve::{AffinePoint, Coords, CurveConfig, CurveOps, R0VMCurveOps};
 pub use field::{Fp, Fp256, Fp384, FpConfig, R0FieldConfig, Unreduced};
 pub use modexp::{BitAccess, ModMul, modexp};

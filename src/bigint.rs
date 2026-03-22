@@ -268,6 +268,13 @@ impl<const N: usize> PartialEq for BigInt<N> {
 
 impl<const N: usize> Eq for BigInt<N> {}
 
+impl<const N: usize> core::hash::Hash for BigInt<N> {
+    #[inline]
+    fn hash<H: core::hash::Hasher>(&self, state: &mut H) {
+        self.0.hash(state);
+    }
+}
+
 impl<const N: usize> PartialOrd for BigInt<N> {
     #[inline]
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
