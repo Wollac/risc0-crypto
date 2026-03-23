@@ -33,6 +33,14 @@ pub type Coords<C, const N: usize> = [UnverifiedBaseField<C, N>; 2];
 pub trait CurveOps<C: CurveConfig<N>, const N: usize>: Send + Sync + 'static {
     /// Computes `a + b` in place (chord rule).
     ///
+    /// Where `a = (x₁, y₁)` and `b = (x₂, y₂)`:
+    ///
+    /// ```text
+    /// λ  = (y₂ - y₁) / (x₂ - x₁)
+    /// x₃ = λ² - x₁ - x₂
+    /// y₃ = λ(x₁ - x₃) - y₁
+    /// ```
+    ///
     /// # Preconditions
     ///
     /// The caller must ensure `x₁ != x₂`. When `x₁ == x₂` the chord formula divides by zero.
@@ -40,6 +48,14 @@ pub trait CurveOps<C: CurveConfig<N>, const N: usize>: Send + Sync + 'static {
     fn add_assign(a: &mut Coords<C, N>, b: &Coords<C, N>);
 
     /// Computes `[2]a` in place (tangent rule).
+    ///
+    /// Where `a = (x₁, y₁)`:
+    ///
+    /// ```text
+    /// λ  = (3x₁² + a) / (2y₁)
+    /// x₃ = λ² - 2x₁
+    /// y₃ = λ(x₁ - x₃) - y₁
+    /// ```
     ///
     /// # Preconditions
     ///

@@ -217,7 +217,7 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
         self.inner.const_eq(&Self::ZERO.inner)
     }
 
-    /// Computes `self⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
+    /// Computes `self⁻¹ mod p`. Panics if `self` is zero.
     #[inline]
     pub fn inverse(&self) -> Self {
         self.as_unverified().inverse().check()
