@@ -40,7 +40,7 @@
 //! Nonce reuse or predictable nonces leak the private key.
 
 use crate::{
-    AffinePoint, SWCurveConfig, Unreduced,
+    AffinePoint, CurveConfig, Fp,
     curve::{BaseField, ScalarField},
 };
 
@@ -48,18 +48,18 @@ use crate::{
 #[derive(educe::Educe)]
 #[educe(Clone, PartialEq, Eq)]
 #[must_use]
-pub struct Signature<C: SWCurveConfig<N>, const N: usize> {
+pub struct Signature<C: CurveConfig<N>, const N: usize> {
     r: ScalarField<C, N>,
     s: ScalarField<C, N>,
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> core::fmt::Debug for Signature<C, N> {
+impl<C: CurveConfig<N>, const N: usize> core::fmt::Debug for Signature<C, N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("Signature").field("r", &self.r).field("s", &self.s).finish()
     }
 }
 
-impl<C: SWCurveConfig<N>, const N: usize> Signature<C, N> {
+impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     /// Creates a signature from `(r, s)` components. Returns `None` if either is zero.
     #[inline]
     pub const fn new(r: ScalarField<C, N>, s: ScalarField<C, N>) -> Option<Self> {
@@ -114,8 +114,8 @@ impl<C: SWCurveConfig<N>, const N: usize> Signature<C, N> {
         }
 
         // s = k⁻¹ * (z + r * d) mod n
-        let k_inv = k.as_unreduced().inverse();
-        let mut s = r.as_unreduced() * d;
+        let k_inv = k.as_unverified().inverse();
+        let mut s = r.as_unverified() * d;
         s += &z;
         s *= &k_inv;
         let s = s.check();
@@ -154,7 +154,7 @@ impl<C: SWCurveConfig<N>, const N: usize> Signature<C, N> {
 ///
 /// Uses `reduce()` (not `check()`) because the base field value may legitimately exceed the
 /// scalar field modulus - this is a cross-field conversion, not a bigint2 result check.
-fn base_to_scalar<C: SWCurveConfig<N>, const N: usize>(x: BaseField<C, N>) -> ScalarField<C, N> {
+fn base_to_scalar<C: CurveConfig<N>, const N: usize>(x: BaseField<C, N>) -> ScalarField<C, N> {
     // ECDSA requires p < 2n so that x mod n has at most 2 preimages. We check the stricter
     // bit_len(n) >= bit_len(p) which is simpler and sufficient for all standard curves.
     const {
@@ -163,7 +163,7 @@ fn base_to_scalar<C: SWCurveConfig<N>, const N: usize>(x: BaseField<C, N>) -> Sc
             "ECDSA requires scalar and base fields to have similar bit length",
         );
     }
-    Unreduced::<C::ScalarFieldConfig, N>::from_bigint(x.to_bigint()).reduce()
+    Fp::<C::ScalarFieldConfig, N>::reduce_from_bigint(x.to_bigint())
 }
 
 #[cfg(test)]
