@@ -6,16 +6,18 @@
 //! - Spec: <https://www.secg.org/sec2-v2.pdf> (section 2.4.2)
 
 use crate::{
-    AffinePoint, BigInt, CurveConfig, Fp, LIMBS_256, R0FieldConfig, R0VMCurveOps, bigint, fp,
+    AffinePoint, BigInt, CurveConfig, FieldConfig, Fp, LIMBS_256, R0VMCurveOps, R0VMFieldOps,
+    bigint, fp,
 };
 
 // --- Base field (Fq): coordinates, modulus = p ---
 
 pub enum FqConfig {}
 
-impl R0FieldConfig<LIMBS_256> for FqConfig {
+impl FieldConfig<LIMBS_256> for FqConfig {
     const MODULUS: BigInt<LIMBS_256> =
         bigint!("0xffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
+    type Ops = R0VMFieldOps;
 }
 
 pub type Fq = Fp<FqConfig, LIMBS_256>;
@@ -24,9 +26,10 @@ pub type Fq = Fp<FqConfig, LIMBS_256>;
 
 pub enum FrConfig {}
 
-impl R0FieldConfig<LIMBS_256> for FrConfig {
+impl FieldConfig<LIMBS_256> for FrConfig {
     const MODULUS: BigInt<LIMBS_256> =
         bigint!("0xffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+    type Ops = R0VMFieldOps;
 }
 
 pub type Fr = Fp<FrConfig, LIMBS_256>;

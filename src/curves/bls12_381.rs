@@ -6,17 +6,19 @@
 //! - Spec: <https://datatracker.ietf.org/doc/draft-irtf-cfrg-pairing-friendly-curves/>
 
 use crate::{
-    AffinePoint, BigInt, CurveConfig, Fp, LIMBS_384, R0FieldConfig, R0VMCurveOps, bigint, fp,
+    AffinePoint, BigInt, CurveConfig, FieldConfig, Fp, LIMBS_384, R0VMCurveOps, R0VMFieldOps,
+    bigint, fp,
 };
 
 // --- Base field (Fq): coordinates, modulus = q (381 bits) ---
 
 pub enum FqConfig {}
 
-impl R0FieldConfig<LIMBS_384> for FqConfig {
+impl FieldConfig<LIMBS_384> for FqConfig {
     const MODULUS: BigInt<LIMBS_384> = bigint!(
         "0x1a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab"
     );
+    type Ops = R0VMFieldOps;
 }
 
 pub type Fq = Fp<FqConfig, LIMBS_384>;
@@ -25,9 +27,10 @@ pub type Fq = Fp<FqConfig, LIMBS_384>;
 
 pub enum FrConfig {}
 
-impl R0FieldConfig<LIMBS_384> for FrConfig {
+impl FieldConfig<LIMBS_384> for FrConfig {
     const MODULUS: BigInt<LIMBS_384> =
         bigint!("0x73eda753299d7d483339d80809a1d80553bda402fffe5bfeffffffff00000001");
+    type Ops = R0VMFieldOps;
 }
 
 pub type Fr = Fp<FrConfig, LIMBS_384>;

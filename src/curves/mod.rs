@@ -21,8 +21,8 @@ macro_rules! curve_sanity_tests {
 
         #[test]
         fn mul_group_order_is_identity() {
-            use crate::R0FieldConfig as _;
-            let order = crate::Unreduced::from_bigint(FrConfig::MODULUS);
+            use crate::FieldConfig as _;
+            let order = crate::UnverifiedFp::from_bigint(FrConfig::MODULUS);
             assert!((&Affine::GENERATOR * &order).is_identity());
         }
     };

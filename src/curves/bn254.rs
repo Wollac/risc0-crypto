@@ -6,16 +6,18 @@
 //! - Spec: <https://eips.ethereum.org/EIPS/eip-197>
 
 use crate::{
-    AffinePoint, BigInt, CurveConfig, Fp, LIMBS_256, R0FieldConfig, R0VMCurveOps, bigint, fp,
+    AffinePoint, BigInt, CurveConfig, FieldConfig, Fp, LIMBS_256, R0VMCurveOps, R0VMFieldOps,
+    bigint, fp,
 };
 
 // --- Base field (Fq): coordinates, modulus = q ---
 
 pub enum FqConfig {}
 
-impl R0FieldConfig<LIMBS_256> for FqConfig {
+impl FieldConfig<LIMBS_256> for FqConfig {
     const MODULUS: BigInt<LIMBS_256> =
         bigint!("0x30644e72e131a029b85045b68181585d97816a916871ca8d3c208c16d87cfd47");
+    type Ops = R0VMFieldOps;
 }
 
 pub type Fq = Fp<FqConfig, LIMBS_256>;
@@ -24,9 +26,10 @@ pub type Fq = Fp<FqConfig, LIMBS_256>;
 
 pub enum FrConfig {}
 
-impl R0FieldConfig<LIMBS_256> for FrConfig {
+impl FieldConfig<LIMBS_256> for FrConfig {
     const MODULUS: BigInt<LIMBS_256> =
         bigint!("0x30644e72e131a029b85045b68181585d2833e84879b9709143e1f593f0000001");
+    type Ops = R0VMFieldOps;
 }
 
 pub type Fr = Fp<FrConfig, LIMBS_256>;
