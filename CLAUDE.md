@@ -46,7 +46,7 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 
 4. **Backend modules** (`src/field/ops.rs`, `src/curve/ops.rs`) - Each contains the FFI dispatch implementing `FieldOps` / `CurveOps` for the R0VM target. Replacing either module is all that's needed to retarget to a different backend.
 
-5. **`src/ecdsa.rs`** - ECDSA signing and verification over any `SWCurveConfig`. The `Signature<C, N>` struct holds `(r, s)` scalar field elements. The caller supplies the message hash (big-endian bytes, reduced mod n) and a per-signature random nonce - no hash functions or RNG are included. Curves where `bit_len(n) < bit_len(p)` (e.g. BLS12-381) are rejected at compile time. Cross-field conversion from the base field to the scalar field uses `.reduce()` (not `.check()`), because the input is a legitimate field element that may exceed the scalar modulus, not a `risc0-bigint2` operation result.
+5. **`src/ecdsa.rs`** - ECDSA signing and verification over any `CurveConfig`. The `Signature<C, N>` struct holds `(r, s)` scalar field elements. The caller supplies the message hash (big-endian bytes, reduced mod n) and a per-signature random nonce - no hash functions or RNG are included. Curves where `bit_len(n) < bit_len(p)` (e.g. BLS12-381) are rejected at compile time. Cross-field conversion from the base field to the scalar field uses `Fp::reduce_from_bigint()` (not `.check()`), because the input is a legitimate field element that may exceed the scalar modulus, not a `risc0-bigint2` operation result.
 
 ### Supported Curves (`src/curves/`)
 
