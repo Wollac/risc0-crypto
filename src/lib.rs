@@ -22,7 +22,7 @@ macro_rules! bigint {
     };
 }
 
-/// Creates an [`Fp<P,N>`] from a hex string literal.
+/// Creates an [`Fp`] from a hex string literal.
 ///
 /// Panics if the value is `>= p`.
 ///

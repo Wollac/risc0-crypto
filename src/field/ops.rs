@@ -171,6 +171,21 @@ where
             out.assume_init()
         }
     }
+
+    #[inline]
+    fn neg(a: &Uf<P, N>) -> Uf<P, N> {
+        // SAFETY: out is fully written by sys_sub before assume_init.
+        unsafe {
+            let mut out = MaybeUninit::uninit();
+            FieldFfi::sys_sub(
+                &BigInt::ZERO,
+                cast_ptr(a),
+                &P::MODULUS,
+                cast_ptr_mut(out.as_mut_ptr()),
+            );
+            out.assume_init()
+        }
+    }
 }
 
 #[cfg(test)]
