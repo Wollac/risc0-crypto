@@ -25,15 +25,15 @@ Uses fewer cycles than the patched upstream crates provided by RISC Zero.
 ## Example
 
 ```rust,ignore
-use risc0_crypto::{ecdsa::Signature, curves::secp256k1::{self, Affine, Fr}};
+use risc0_crypto::{fp, ecdsa::Signature, curves::secp256k1::{self, Affine, Fr}};
 
 // scalar multiplication
 let scalar: Fr = fp!("0xdeadbeef");
 let point = &Affine::GENERATOR * &scalar;
 
 // ECDSA sign and verify
-let sig = Signature::<secp256k1::Config, 8>::sign(&d, &k, &hash).unwrap();
-assert!(sig.verify(&pubkey, &hash));
+let sig = Signature::<secp256k1::Config, 8>::sign(&d, &k, hash).unwrap();
+assert!(sig.verify(&pubkey, hash));
 ```
 
 ## Testing
