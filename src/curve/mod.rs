@@ -4,7 +4,7 @@ pub use ops::R0VMCurveOps;
 
 use crate::{
     BitAccess,
-    field::{Fp, FpConfig, Unreduced},
+    field::{FieldConfig, Fp, UnverifiedFp},
 };
 use bytemuck::TransparentWrapper;
 use core::{
@@ -18,37 +18,49 @@ pub type BaseField<C, const N: usize> = Fp<<C as CurveConfig<N>>::BaseFieldConfi
 /// The scalar field of curve `C` (used for scalar multiplication).
 pub type ScalarField<C, const N: usize> = Fp<<C as CurveConfig<N>>::ScalarFieldConfig, N>;
 
-/// Unreduced base field element of curve `C` (used for intermediate coordinate arithmetic).
-type UnreducedBaseField<C, const N: usize> = Unreduced<<C as CurveConfig<N>>::BaseFieldConfig, N>;
+/// Unverified base field element of curve `C` (used for intermediate coordinate arithmetic).
+type UnverifiedBaseField<C, const N: usize> =
+    UnverifiedFp<<C as CurveConfig<N>>::BaseFieldConfig, N>;
 
-/// An `[x, y]` coordinate pair as unreduced base field elements. May not be in `[0, p)`.
-pub type Coords<C, const N: usize> = [UnreducedBaseField<C, N>; 2];
+/// An `[x, y]` coordinate pair as unverified base field elements. May not be in `[0, p)`.
+pub type Coords<C, const N: usize> = [UnverifiedBaseField<C, N>; 2];
 
 /// EC arithmetic operations for a short Weierstrass curve.
+///
+/// All methods are safe - unsafe FFI is contained within the backend implementation. The
+/// `_assign` / in-place variants are the required primitives; non-assign variants have default
+/// implementations that copy and delegate.
 pub trait CurveOps<C: CurveConfig<N>, const N: usize>: Send + Sync + 'static {
-    /// Computes `a + b` on the curve (chord rule).
+    /// Computes `a + b` in place (chord rule).
     ///
     /// # Preconditions
     ///
     /// The caller must ensure `x₁ != x₂`. When `x₁ == x₂` the chord formula divides by zero.
     /// Handle same-x cases (doubling, inverse) before calling.
-    fn add(a: &Coords<C, N>, b: &Coords<C, N>) -> Coords<C, N>;
+    fn add_assign(a: &mut Coords<C, N>, b: &Coords<C, N>);
 
-    /// In-place version of [`add`](Self::add). Same preconditions apply.
-    fn add_assign(a: &mut Coords<C, N>, b: &Coords<C, N>) {
-        *a = Self::add(a, b);
-    }
-
-    /// Computes `[2]a` on the curve (tangent rule).
+    /// Computes `[2]a` in place (tangent rule).
     ///
     /// # Preconditions
     ///
     /// The caller must ensure `y != 0`. When `y == 0` the tangent formula divides by `2y`.
-    fn double(a: &Coords<C, N>) -> Coords<C, N>;
+    fn double_assign(a: &mut Coords<C, N>);
 
-    /// In-place version of [`double`](Self::double). Same preconditions apply.
-    fn double_assign(a: &mut Coords<C, N>) {
-        *a = Self::double(a);
+    /// Non-assign version of [`add_assign`](Self::add_assign). Same preconditions apply.
+    #[inline]
+    fn add(a: &Coords<C, N>, b: &Coords<C, N>) -> Coords<C, N> {
+        let mut r = *a;
+        Self::add_assign(&mut r, b);
+        r
+    }
+
+    /// Non-assign version of [`double_assign`](Self::double_assign). Same preconditions
+    /// apply.
+    #[inline]
+    fn double(a: &Coords<C, N>) -> Coords<C, N> {
+        let mut r = *a;
+        Self::double_assign(&mut r);
+        r
     }
 }
 
@@ -58,9 +70,9 @@ pub trait CurveOps<C: CurveConfig<N>, const N: usize>: Send + Sync + 'static {
 /// [`Ops`](Self::Ops) type, which implements [`CurveOps`].
 pub trait CurveConfig<const N: usize>: Sized + Send + Sync + 'static {
     /// Base field config (coordinates).
-    type BaseFieldConfig: FpConfig<N>;
+    type BaseFieldConfig: FieldConfig<N>;
     /// Scalar field config (scalar multiplication).
-    type ScalarFieldConfig: FpConfig<N>;
+    type ScalarFieldConfig: FieldConfig<N>;
     /// EC arithmetic backend. Use [`R0VMCurveOps`] for the R0VM target.
     type Ops: CurveOps<Self, N>;
 
@@ -83,7 +95,7 @@ pub trait CurveConfig<const N: usize>: Sized + Send + Sync + 'static {
         if cofactor::is_one::<Self, _>() {
             return true;
         }
-        let order = Unreduced::wrap_ref(&Self::ScalarFieldConfig::MODULUS);
+        let order = UnverifiedFp::wrap_ref(&Self::ScalarFieldConfig::MODULUS);
         (p * order).is_identity()
     }
 }
@@ -146,7 +158,7 @@ mod cofactor {
 pub struct AffinePoint<C: CurveConfig<N>, const N: usize> {
     /// `None` represents the point at infinity (identity). Coordinates are canonical (`< p`)
     /// after construction; arithmetic operations may produce non-canonical results. Access via
-    /// `xy()` / `xy_ref()` (check - asserts canonical) or `xy_unreduced()` (defers to caller).
+    /// `xy()` / `xy_ref()` (check - asserts canonical) or `xy_unverified()` (defers to caller).
     coords: Option<Coords<C, N>>,
 }
 
@@ -179,9 +191,9 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     ///
     /// # Safety
     ///
-    /// The caller must ensure the point `(x, y)` satisfies the curve equation `y² = x³ + ax + b`.
-    /// Passing an off-curve point to arithmetic operations is undefined behavior at the R0VM
-    /// circuit level.
+    /// The caller must ensure the point `(x, y)` satisfies the curve equation
+    /// `y² = x³ + ax + b`. Passing an off-curve point to arithmetic operations is undefined
+    /// behavior at the R0VM circuit level.
     #[inline]
     pub const unsafe fn new_unchecked(x: BaseField<C, N>, y: BaseField<C, N>) -> Self {
         Self::from_xy(x, y)
@@ -194,8 +206,8 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     pub(crate) const fn from_xy(x: BaseField<C, N>, y: BaseField<C, N>) -> Self {
         Self {
             coords: Some([
-                Unreduced::from_bigint(x.to_bigint()),
-                Unreduced::from_bigint(y.to_bigint()),
+                UnverifiedFp::from_bigint(x.to_bigint()),
+                UnverifiedFp::from_bigint(y.to_bigint()),
             ]),
         }
     }
@@ -229,13 +241,14 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         }
     }
 
-    /// Returns the `(x, y)` coordinates as [`Unreduced`] references, or `None` for the identity.
+    /// Returns the `(x, y)` coordinates as [`UnverifiedFp`] references, or `None` for the
+    /// identity.
     ///
     /// Use this for intermediate arithmetic where canonicality checks can be deferred.
     #[inline(always)]
-    pub const fn xy_unreduced(
+    pub const fn xy_unverified(
         &self,
-    ) -> Option<(&UnreducedBaseField<C, N>, &UnreducedBaseField<C, N>)> {
+    ) -> Option<(&UnverifiedBaseField<C, N>, &UnverifiedBaseField<C, N>)> {
         match &self.coords {
             None => None,
             Some([x, y]) => Some((x, y)),
@@ -280,7 +293,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         // y == 0 is impossible for on-curve points when the cofactor is odd (no 2-torsion)
         if !cofactor::is_odd::<C, _>() {
             // raw is_zero() handles the honest case (y == 0); a dishonest non-canonical
-            // zero (y > 0 but y ≡ 0 mod p) needs no check since ec_double panics on y ≡ 0
+            // zero (y > 0 but y == 0 mod p) needs no check since ec_double panics on y == 0
             if a_xy[1].as_bigint().is_zero() {
                 return Self::IDENTITY;
             }
@@ -297,7 +310,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         // y == 0 is impossible for on-curve points when the cofactor is odd (no 2-torsion)
         if !cofactor::is_odd::<C, _>() {
             // raw is_zero() handles the honest case (y == 0); a dishonest non-canonical
-            // zero (y > 0 but y ≡ 0 mod p) needs no check since ec_double panics on y ≡ 0
+            // zero (y > 0 but y == 0 mod p) needs no check since ec_double panics on y == 0
             if a_xy[1].as_bigint().is_zero() {
                 self.coords = None;
                 return;
@@ -390,7 +403,7 @@ impl<C: CurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
             (_, None) => *self,
             (None, _) => *rhs,
             // same x: doubling (P + P) or cancellation (P + (-P))
-            // sound if non-canonical: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
+            // sound if non-canonical: ec_add divides by x2 - x1, circuit fails on x2 - x1 == 0
             (Some(a_xy), Some(b_xy)) if a_xy[0].raw_eq(&b_xy[0]) => {
                 if a_xy[1].check_is_eq(&b_xy[1]) { self.double() } else { AffinePoint::IDENTITY }
             }
@@ -406,7 +419,7 @@ impl<C: CurveConfig<N>, const N: usize> AddAssign<&Self> for AffinePoint<C, N> {
             (_, None) => {}
             (None, Some(_)) => *self = *rhs,
             // same x: doubling (P + P) or cancellation (P + (-P))
-            // sound if non-canonical: ec_add divides by x₂ - x₁, circuit fails on x₂ - x₁ ≡ 0
+            // sound if non-canonical: ec_add divides by x2 - x1, circuit fails on x2 - x1 == 0
             (Some(a_xy), Some(b_xy)) if a_xy[0].raw_eq(&b_xy[0]) => {
                 if a_xy[1].check_is_eq(&b_xy[1]) {
                     self.double_assign();
@@ -437,7 +450,7 @@ impl<C: CurveConfig<N>, const N: usize> SubAssign<&Self> for AffinePoint<C, N> {
     }
 }
 
-impl<C: CurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>> Mul<&T>
+impl<C: CurveConfig<N>, const N: usize, T: AsRef<UnverifiedFp<C::ScalarFieldConfig, N>>> Mul<&T>
     for &AffinePoint<C, N>
 {
     type Output = AffinePoint<C, N>;
@@ -448,8 +461,8 @@ impl<C: CurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig,
     }
 }
 
-impl<C: CurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig, N>>> MulAssign<&T>
-    for AffinePoint<C, N>
+impl<C: CurveConfig<N>, const N: usize, T: AsRef<UnverifiedFp<C::ScalarFieldConfig, N>>>
+    MulAssign<&T> for AffinePoint<C, N>
 {
     #[inline]
     fn mul_assign(&mut self, scalar: &T) {
@@ -460,7 +473,7 @@ impl<C: CurveConfig<N>, const N: usize, T: AsRef<Unreduced<C::ScalarFieldConfig,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{BigInt, R0FieldConfig, field::Fp256};
+    use crate::{BigInt, R0VMFieldOps, field::Fp256};
 
     // --- Toy curve: y² = x³ + x + 1 over F_7, order 5 ---
     //
@@ -468,14 +481,16 @@ mod tests {
     // Group:  G=(0,1), 2G=(2,5), 3G=(2,2), 4G=(0,6), 5G=O
 
     enum FqConfig {}
-    impl R0FieldConfig<8> for FqConfig {
+    impl FieldConfig<8> for FqConfig {
         const MODULUS: BigInt<8> = BigInt::from_u32(7);
+        type Ops = R0VMFieldOps;
     }
     type Fq = Fp256<FqConfig>;
 
     enum FrConfig {}
-    impl R0FieldConfig<8> for FrConfig {
+    impl FieldConfig<8> for FrConfig {
         const MODULUS: BigInt<8> = BigInt::from_u32(5);
+        type Ops = R0VMFieldOps;
     }
     type Fr = Fp256<FrConfig>;
 
@@ -561,7 +576,7 @@ mod tests {
         assert!((&g * &Fr::ZERO).is_identity());
 
         // [n]G = O (group order)
-        let order = Unreduced::from_bigint(Fr::MODULUS);
+        let order = UnverifiedFp::from_bigint(Fr::MODULUS);
         assert!((&g * &order).is_identity());
 
         // [2]G + [3]G = [5]G = O

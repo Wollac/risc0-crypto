@@ -7,7 +7,7 @@
 //! file for why we bypass risc0-bigint2's EC API.
 
 use super::{Coords, CurveConfig, CurveOps};
-use crate::{BigInt, FpConfig};
+use crate::{BigInt, field::FieldConfig};
 use bytemuck::TransparentWrapper;
 use core::{mem::MaybeUninit, ptr};
 use include_bytes_aligned::include_bytes_aligned;
@@ -38,6 +38,20 @@ impl<const N: usize, C: CurveConfig<N>> CurveParams<N> for C {
 
 impl<C: CurveConfig<N>, const N: usize> CurveOps<C, N> for R0VMCurveOps {
     #[inline(always)]
+    fn add_assign(a: &mut Coords<C, N>, b: &Coords<C, N>) {
+        let ptr = cast_coords_mut(ptr::from_mut(a));
+        // SAFETY: out aliases a per ec_add_raw's contract.
+        unsafe { ec_add_raw(ptr, cast_coords(ptr::from_ref(b)), &C::CURVE_PARAMS, ptr) }
+    }
+
+    #[inline(always)]
+    fn double_assign(a: &mut Coords<C, N>) {
+        let ptr = cast_coords_mut(ptr::from_mut(a));
+        // SAFETY: out aliases a per ec_double_raw's contract.
+        unsafe { ec_double_raw(ptr, &C::CURVE_PARAMS, ptr) }
+    }
+
+    #[inline(always)]
     fn add(a: &Coords<C, N>, b: &Coords<C, N>) -> Coords<C, N> {
         let mut out = MaybeUninit::uninit();
         // SAFETY: ec_add_raw fully writes out before we assume_init.
@@ -53,13 +67,6 @@ impl<C: CurveConfig<N>, const N: usize> CurveOps<C, N> for R0VMCurveOps {
     }
 
     #[inline(always)]
-    fn add_assign(a: &mut Coords<C, N>, b: &Coords<C, N>) {
-        let ptr = cast_coords_mut(ptr::from_mut(a));
-        // SAFETY: out aliases a per ec_add_raw's contract.
-        unsafe { ec_add_raw(ptr, cast_coords(ptr::from_ref(b)), &C::CURVE_PARAMS, ptr) }
-    }
-
-    #[inline(always)]
     fn double(a: &Coords<C, N>) -> Coords<C, N> {
         let mut out = MaybeUninit::uninit();
         // SAFETY: ec_double_raw fully writes out before we assume_init.
@@ -71,13 +78,6 @@ impl<C: CurveConfig<N>, const N: usize> CurveOps<C, N> for R0VMCurveOps {
             );
             out.assume_init()
         }
-    }
-
-    #[inline(always)]
-    fn double_assign(a: &mut Coords<C, N>) {
-        let ptr = cast_coords_mut(ptr::from_mut(a));
-        // SAFETY: out aliases a per ec_double_raw's contract.
-        unsafe { ec_double_raw(ptr, &C::CURVE_PARAMS, ptr) }
     }
 }
 
@@ -99,14 +99,14 @@ impl<C: CurveConfig<N>, const N: usize> CurveOps<C, N> for R0VMCurveOps {
 ///
 /// # Preconditions
 ///
-/// * `x₁ != x₂` - when equal, the chord formula divides by zero.
-/// * Neither point may be the identity (no affine representation).
+/// - `x₁ != x₂` - when equal, the chord formula divides by zero.
+/// - Neither point may be the identity (no affine representation).
 ///
 /// # Safety
 ///
-/// * `lhs` and `rhs` must point to readable, aligned `[BigInt<N>; 2]`.
-/// * `out` must point to writable, aligned `[BigInt<N>; 2]` (need not be initialized).
-/// * `out` may alias `lhs` or `rhs` - the FFI reads all inputs before writing.
+/// - `lhs` and `rhs` must point to readable, aligned `[BigInt<N>; 2]`.
+/// - `out` must point to writable, aligned `[BigInt<N>; 2]` (need not be initialized).
+/// - `out` may alias `lhs` or `rhs` - the FFI reads all inputs before writing.
 #[inline(always)]
 unsafe fn ec_add_raw<const N: usize>(
     lhs: *const [BigInt<N>; 2],
@@ -146,14 +146,14 @@ unsafe fn ec_add_raw<const N: usize>(
 ///
 /// # Preconditions
 ///
-/// * `y₁ != 0` - when zero, the tangent formula divides by `2y₁`.
-/// * The point may not be the identity (no affine representation).
+/// - `y₁ != 0` - when zero, the tangent formula divides by `2y₁`.
+/// - The point may not be the identity (no affine representation).
 ///
 /// # Safety
 ///
-/// * `point` must point to readable, aligned `[BigInt<N>; 2]`.
-/// * `out` must point to writable, aligned `[BigInt<N>; 2]` (need not be initialized).
-/// * `out` may alias `point` - the FFI reads all inputs before writing.
+/// - `point` must point to readable, aligned `[BigInt<N>; 2]`.
+/// - `out` must point to writable, aligned `[BigInt<N>; 2]` (need not be initialized).
+/// - `out` may alias `point` - the FFI reads all inputs before writing.
 #[inline(always)]
 unsafe fn ec_double_raw<const N: usize>(
     point: *const [BigInt<N>; 2],

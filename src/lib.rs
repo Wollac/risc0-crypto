@@ -47,5 +47,5 @@ pub const LIMBS_384: usize = 12;
 
 pub use bigint::BigInt;
 pub use curve::{AffinePoint, Coords, CurveConfig, CurveOps, R0VMCurveOps};
-pub use field::{Fp, Fp256, Fp384, FpConfig, R0FieldConfig, Unreduced};
+pub use field::{FieldConfig, FieldOps, Fp, Fp256, Fp384, R0VMFieldOps, UnverifiedFp};
 pub use modexp::{BitAccess, ModMul, modexp};

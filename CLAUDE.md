@@ -28,11 +28,11 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 1. **`BigInt<N>`** (`src/bigint.rs`) - Fixed-size integer as `[u32; N]` little-endian limbs. Supports const hex parsing (`bigint!()` macro), big-endian byte conversion, `bit_len()` (const fn, used to auto-derive `MODULUS_BIT_LEN` on `Fp`), and `const_eq()` / `const_lt()` for const-context comparisons. `PartialEq` and `Ord` use limb-by-limb ops rather than derived memcmp - memcmp is expensive on R0VM.
 
 2. **`Fp<P, N>`** (`src/field/`) - Prime field element generic over a config type `P` and limb count `N`. Type aliases: `Fp256<P>` (N=8, 256-bit) and `Fp384<P>` (N=12, 384-bit).
-   - `R0FieldConfig<N>` trait: implement to define a new field (just set `MODULUS`)
-   - `FpConfig<N>` trait: internal dispatch layer with unsafe `fp_*` pointer-based methods and safe `fp_reduce`; a blanket impl in `ops.rs` derives it from every `R0FieldConfig`
+   - `FieldConfig<N>` trait: implement to define a new field (set `MODULUS` and `type Ops`)
+   - `FieldOps<P, N>` trait: safe backend interface for field arithmetic (`add`, `sub`, `mul`, `inv`, `reduce`, etc.). `R0VMFieldOps` is the R0VM backend - all unsafe FFI is encapsulated there
    - Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`
-   - For intermediate computations, use `Unreduced<P, N>` (skips canonicality checks), then call `.check()` (assert canonical) or `.reduce()` (force canonical) to convert back to `Fp`
-   - `Fp` implements `AsRef<Unreduced<P, N>>`, so `Fp` values can be used directly in `Unreduced` arithmetic and as scalars in `AffinePoint * scalar`
+   - For intermediate computations, use `UnverifiedFp<P, N>` (skips canonicality checks), then call `.check()` to assert canonical and convert back to `Fp`. For values that may not be canonical, use `Fp::reduce_from_bigint()` to force reduction
+   - `Fp` implements `AsRef<UnverifiedFp<P, N>>`, so `Fp` values can be used directly in `UnverifiedFp` arithmetic and as scalars in `AffinePoint * scalar`
 
 3. **`AffinePoint<C, N>`** (`src/curve/`) - Short Weierstrass curve point in affine coordinates.
    - **On-curve invariant**: every `AffinePoint` satisfies `y² = x³ + ax + b` (or is identity). Subgroup membership is not enforced.
@@ -41,10 +41,10 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
    - `CurveOps<C, N>` trait: EC arithmetic interface (`add`, `double` + in-place variants). `R0VMCurveOps` is the R0VM backend.
    - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul)
    - Inherent methods `double()` / `double_assign()` for explicit point doubling
-   - Coordinates may not be canonical after arithmetic - access via `xy()` / `xy_ref()` (check) or `xy_unreduced()` (deferred)
+   - Coordinates may not be canonical after arithmetic - access via `xy()` / `xy_ref()` (check) or `xy_unverified()` (deferred)
    - EC operations in `R0VMCurveOps` call `sys_bigint2_3`/`sys_bigint2_4` directly with pre-compiled circuit blobs (copied from `risc0-bigint2` into `OUT_DIR` by `build.rs` - see that file for rationale)
 
-4. **Backend modules** (`src/field/ops.rs`, `src/curve/ops.rs`) - Each contains the FFI dispatch and blanket impl for its domain. Replacing either module is all that's needed to retarget to a different backend.
+4. **Backend modules** (`src/field/ops.rs`, `src/curve/ops.rs`) - Each contains the FFI dispatch implementing `FieldOps` / `CurveOps` for the R0VM target. Replacing either module is all that's needed to retarget to a different backend.
 
 ### Supported Curves (`src/curves/`)
 
@@ -66,7 +66,7 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 - **Const-time construction**: `fp!()` and `bigint!()` macros validate at compile time
 - **Zero heap allocation**: all types are stack-allocated, `no_std` compatible
 - **Cofactor-1 optimization**: `COFACTOR` is a `&'static [u32]` LE slice on `CurveConfig`. Default `is_in_correct_subgroup()` and `clear_cofactor()` check `cofactor_is_one()` at compile time - cofactor-1 curves need no override
-- **`Unreduced` check vs reduce**: `Unreduced` holds possibly non-canonical field values. Arithmetic is always sound inside. When leaving the struct (extracting an `Fp` or producing a field-semantic `bool`), two strategies: `check` asserts the value is already canonical, `reduce` forces it canonical. The same choice applies to comparisons.
+- **`UnverifiedFp` check semantics**: `UnverifiedFp` holds possibly non-canonical field values from unconstrained VM operations. Arithmetic is always sound inside. When leaving the struct (extracting an `Fp` or producing a field-semantic `bool`), call `.check()` to assert the value is already canonical. For values that may not be canonical, use `Fp::reduce_from_bigint()`. The same check semantics apply to comparisons via `check_is_eq()`.
 
 ## Style
 
@@ -81,6 +81,6 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 
 ## Adding a New Curve
 
-1. Create `src/curves/<name>.rs` with `FqConfig`, `FrConfig`, `Config` (implementing `CurveConfig<N>`), and type aliases
+1. Create `src/curves/<name>.rs` with `FqConfig` and `FrConfig` (implementing `FieldConfig<N>` with `type Ops = R0VMFieldOps`), `Config` (implementing `CurveConfig<N>`), and type aliases
 2. Add `pub mod <name>;` to `src/curves/mod.rs`
 3. Add a `#[cfg(test)] mod tests` block and invoke `curve_sanity_tests!()` (defined in `curves/mod.rs`) for the standard validation tests

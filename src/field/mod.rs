@@ -1,5 +1,5 @@
 mod ops;
-mod unreduced;
+mod unverified;
 
 use crate::{BigInt, LIMBS_256, LIMBS_384};
 use bytemuck::TransparentWrapper;
@@ -8,36 +8,81 @@ use core::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
-pub use unreduced::Unreduced;
+pub use ops::R0VMFieldOps;
+pub use unverified::UnverifiedFp;
 
-/// Shorthand for [`Unreduced`] in pointer-heavy signatures.
-type Uf<P, const N: usize> = Unreduced<P, N>;
+/// Shorthand for [`UnverifiedFp`] in pointer-heavy signatures.
+type Uf<P, const N: usize> = UnverifiedFp<P, N>;
 
-/// Defines a prime field by its modulus. Implement this trait to introduce a new field.
-pub trait R0FieldConfig<const N: usize>: Sized + Send + Sync + 'static {
-    /// The field modulus `p`.
-    const MODULUS: BigInt<N>;
+/// Field arithmetic operations for a prime field.
+///
+/// All methods are safe - unsafe FFI is contained within the backend implementation. The
+/// `_assign` / in-place variants are the required primitives; non-assign variants have default
+/// implementations that copy and delegate.
+pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
+    /// Computes `a + b mod p` in place.
+    fn add_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
+    /// Computes `a - b mod p` in place.
+    fn sub_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
+    /// Computes `a * b mod p` in place.
+    fn mul_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
+    /// Computes `a = 0 - a mod p` in place.
+    fn neg_in_place(a: &mut Uf<P, N>);
 
-    /// Multiplicative identity.
-    const ONE: Fp<Self, N> = {
-        assert!(BigInt::ONE.const_lt(&Self::MODULUS));
-        Fp { inner: BigInt::ONE, _marker: PhantomData }
-    };
+    /// Computes `a⁻¹ mod p`. Panics if `a` is zero.
+    fn inv(a: &Uf<P, N>) -> Uf<P, N>;
+
+    /// Non-assign version of [`add_assign`](Self::add_assign).
+    #[inline]
+    fn add(a: &Uf<P, N>, b: &Uf<P, N>) -> Uf<P, N> {
+        let mut r = *a;
+        Self::add_assign(&mut r, b);
+        r
+    }
+
+    /// Non-assign version of [`sub_assign`](Self::sub_assign).
+    #[inline]
+    fn sub(a: &Uf<P, N>, b: &Uf<P, N>) -> Uf<P, N> {
+        let mut r = *a;
+        Self::sub_assign(&mut r, b);
+        r
+    }
+
+    /// Non-assign version of [`mul_assign`](Self::mul_assign).
+    #[inline]
+    fn mul(a: &Uf<P, N>, b: &Uf<P, N>) -> Uf<P, N> {
+        let mut r = *a;
+        Self::mul_assign(&mut r, b);
+        r
+    }
+
+    /// Non-assign version of [`neg_in_place`](Self::neg_in_place).
+    #[inline]
+    fn neg(a: &Uf<P, N>) -> Uf<P, N> {
+        let mut r = *a;
+        Self::neg_in_place(&mut r);
+        r
+    }
+
+    /// Reduces `a` into `[0, p)`, returning a canonical [`Fp`].
+    #[inline]
+    fn reduce(a: &Uf<P, N>) -> Fp<P, N> {
+        // a + 0 mod p forces reduction as a side effect
+        Self::add(a, &Uf::from_bigint(BigInt::ZERO)).check()
+    }
 }
 
-/// A prime field with arithmetic operations. Provided by a blanket impl over [`R0FieldConfig`].
+/// Defines a prime field and its arithmetic backend.
 ///
-/// # Safety
-///
-/// The unsafe `fp_*` methods have the following pointer contract:
-/// * `a` and `b` must point to readable, aligned memory for `Unreduced<Self, N>`.
-/// * `out` must point to writeable, aligned memory for `Unreduced<Self, N>`.
-/// * `out` need not be initialized - the implementation writes all limbs.
-/// * `out` may alias `a` or `b` - the implementation reads all inputs before writing.
-/// * Results need not be reduced to `[0, p)`.
-pub trait FpConfig<const N: usize>: Sized + Send + Sync + 'static {
+/// Implement this trait to introduce a new field. The arithmetic is delegated to the associated
+/// [`Ops`](Self::Ops) type, which implements [`FieldOps`]. For the R0VM target, use
+/// [`R0VMFieldOps`].
+pub trait FieldConfig<const N: usize>: Sized + Send + Sync + 'static {
     /// The field modulus `p`.
     const MODULUS: BigInt<N>;
+
+    /// Arithmetic backend for this field.
+    type Ops: FieldOps<Self, N>;
 
     /// Number of bits in the binary representation of the modulus.
     const MODULUS_BIT_LEN: u32 = Self::MODULUS.bit_len();
@@ -49,33 +94,13 @@ pub trait FpConfig<const N: usize>: Sized + Send + Sync + 'static {
     };
 
     /// Multiplicative identity of the field.
-    const ONE: Fp<Self, N>;
-
-    /// Computes `a + b mod p`.
-    /// # Safety
-    /// See [trait-level docs](Self).
-    unsafe fn fp_add(a: *const Uf<Self, N>, b: *const Uf<Self, N>, out: *mut Uf<Self, N>);
-    /// Computes `a - b mod p`.
-    /// # Safety
-    /// See [trait-level docs](Self).
-    unsafe fn fp_sub(a: *const Uf<Self, N>, b: *const Uf<Self, N>, out: *mut Uf<Self, N>);
-    /// Computes `a * b mod p`.
-    /// # Safety
-    /// See [trait-level docs](Self).
-    unsafe fn fp_mul(a: *const Uf<Self, N>, b: *const Uf<Self, N>, out: *mut Uf<Self, N>);
-    /// Computes `-a mod p`.
-    /// # Safety
-    /// See [trait-level docs](Self).
-    unsafe fn fp_neg(a: *const Uf<Self, N>, out: *mut Uf<Self, N>);
-    /// Computes `a⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
-    /// # Safety
-    /// See [trait-level docs](Self).
-    unsafe fn fp_inv(a: &Uf<Self, N>, out: *mut Uf<Self, N>);
-    /// Reduces `a` to `[0, p)` in place. The result must be canonical.
-    fn fp_reduce(a: &mut BigInt<N>);
+    const ONE: Fp<Self, N> = {
+        assert!(BigInt::ONE.const_lt(&Self::MODULUS));
+        Fp { inner: BigInt::ONE, _marker: PhantomData }
+    };
 }
 
-/// An element of the prime field defined by [`P::MODULUS`](FpConfig::MODULUS).
+/// An element of the prime field defined by [`P::MODULUS`](FieldConfig::MODULUS).
 ///
 /// # Invariant
 ///
@@ -84,9 +109,8 @@ pub trait FpConfig<const N: usize>: Sized + Send + Sync + 'static {
 /// immediate UB for code that depends on canonicality.
 ///
 /// Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`.
-/// For performance-sensitive chains of arithmetic, use [`Unreduced`] which defers the
-/// canonicality check. Convert back via [`check`](Unreduced::check) (assert canonical) or
-/// [`reduce`](Unreduced::reduce) (force canonical).
+/// For performance-sensitive chains of arithmetic, use [`UnverifiedFp`] which defers the
+/// canonicality check. Convert back via [`check`](UnverifiedFp::check) (assert canonical).
 #[derive(educe::Educe)]
 #[educe(Copy, Clone, PartialEq, Eq, Hash)]
 #[must_use]
@@ -124,27 +148,27 @@ impl<P, const N: usize> Fp<P, N> {
         self.inner
     }
 
-    /// Reinterprets this field element as an [`Unreduced`] (zero-cost).
+    /// Reinterprets this field element as an [`UnverifiedFp`] (zero-cost).
     #[inline]
-    pub fn as_unreduced(&self) -> &Unreduced<P, N> {
-        Unreduced::wrap_ref(&self.inner)
+    pub fn as_unverified(&self) -> &UnverifiedFp<P, N> {
+        UnverifiedFp::wrap_ref(&self.inner)
     }
 
-    /// Reinterprets this field element as `&mut Unreduced` (zero-cost).
+    /// Reinterprets this field element as `&mut UnverifiedFp` (zero-cost).
     ///
     /// # Safety
     ///
     /// The caller must restore the `< p` invariant before using `self` as `Fp` again
     /// (e.g. via `assert!(self.is_valid())`).
     #[inline]
-    unsafe fn as_unreduced_mut(&mut self) -> &mut Unreduced<P, N> {
-        Unreduced::wrap_mut(&mut self.inner)
+    unsafe fn as_unverified_mut(&mut self) -> &mut UnverifiedFp<P, N> {
+        UnverifiedFp::wrap_mut(&mut self.inner)
     }
 }
 
-// --- Arithmetic (requires `P: FpConfig<N>`) ---
+// --- Arithmetic (requires `P: FieldConfig<N>`) ---
 
-impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
     /// Additive identity (`0`).
     pub const ZERO: Self = P::ZERO;
     /// Multiplicative identity (`1`).
@@ -155,10 +179,10 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     pub const MODULUS_BIT_LEN: u32 = P::MODULUS_BIT_LEN;
 
     /// Shift factor for processing byte slices in chunks of `N * 4 - 1` bytes.
-    const CHUNK_BASE: Unreduced<P, N> = {
+    const CHUNK_BASE: UnverifiedFp<P, N> = {
         let mut limbs = [0u32; N];
         limbs[N - 1] = 1 << (u32::BITS - 8);
-        Unreduced::from_bigint(BigInt::new(limbs))
+        UnverifiedFp::from_bigint(BigInt::new(limbs))
     };
 
     /// Creates a field element from a [`BigInt`], returning `None` if the value is `>= p`.
@@ -196,7 +220,26 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     /// Computes `self⁻¹ mod p`. Computing the inverse of zero is undefined behavior.
     #[inline]
     pub fn inverse(&self) -> Self {
-        self.as_unreduced().inverse().check()
+        self.as_unverified().inverse().check()
+    }
+
+    /// Mathematically reduces an arbitrary [`BigInt`] into a valid field element in `[0, p)`.
+    #[inline]
+    pub fn reduce_from_bigint(mut b: BigInt<N>) -> Self {
+        // fast path: already canonical
+        if b.const_lt(&P::MODULUS) {
+            return unsafe { Self::from_bigint_unchecked(b) };
+        }
+
+        // fast path: single subtraction when MSB of modulus is set (2p overflows N limbs,
+        // so any value >= p in N limbs is in [p, 2p))
+        if P::MODULUS.msb_set() {
+            b -= &P::MODULUS;
+            return unsafe { Self::from_bigint_unchecked(b) };
+        }
+
+        // fallback: delegate to the backend's modular reduction
+        P::Ops::reduce(&UnverifiedFp::from_bigint(b))
     }
 
     /// Creates a field element from a big-endian byte slice, reducing modulo `p`.
@@ -205,18 +248,19 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     #[inline]
     pub fn from_be_bytes_mod_order(bytes: &[u8]) -> Self {
         if bytes.len() <= N * 4 {
-            return Unreduced::from_bigint(BigInt::from_be_bytes(bytes)).reduce();
+            return Self::reduce_from_bigint(BigInt::from_be_bytes(bytes));
         }
 
         let chunks = bytes.rchunks_exact(N * 4 - 1);
         let first = chunks.remainder();
 
-        let mut result = Unreduced::from_bigint(BigInt::from_be_bytes(first));
+        let mut result = UnverifiedFp::from_bigint(BigInt::from_be_bytes(first));
         for chunk in chunks.rev() {
-            let chunk_val = Unreduced::from_bigint(BigInt::from_be_bytes(chunk));
+            let chunk_val = UnverifiedFp::from_bigint(BigInt::from_be_bytes(chunk));
             result *= &Self::CHUNK_BASE;
             result += &chunk_val;
         }
+        // chunks is non-empty (early return above), so the loop reduces and .check() is sound
         result.check()
     }
 
@@ -227,18 +271,19 @@ impl<P: FpConfig<N>, const N: usize> Fp<P, N> {
     #[inline]
     pub fn from_le_bytes_mod_order(bytes: &[u8]) -> Self {
         if bytes.len() <= N * 4 {
-            return Unreduced::from_bigint(BigInt::from_le_bytes(bytes)).reduce();
+            return Self::reduce_from_bigint(BigInt::from_le_bytes(bytes));
         }
 
         let chunks = bytes.chunks_exact(N * 4 - 1);
         let first = chunks.remainder();
 
-        let mut result = Unreduced::from_bigint(BigInt::from_le_bytes(first));
+        let mut result = UnverifiedFp::from_bigint(BigInt::from_le_bytes(first));
         for chunk in chunks.rev() {
-            let chunk_val = Unreduced::from_bigint(BigInt::from_le_bytes(chunk));
+            let chunk_val = UnverifiedFp::from_bigint(BigInt::from_le_bytes(chunk));
             result *= &Self::CHUNK_BASE;
             result += &chunk_val;
         }
+        // chunks is non-empty (early return above), so the loop reduces and .check() is sound
         result.check()
     }
 }
@@ -251,65 +296,65 @@ impl<P, const N: usize> core::fmt::Debug for Fp<P, N> {
 
 // --- Checked operator impls (canonical output) ---
 //
-// - &ref Op &ref: delegates to Unreduced, then .check()
-// - val OpAssign &ref: in-place via as_unreduced_mut(), then assert
+// - &ref Op &ref: delegates to UnverifiedFp, then .check()
+// - val OpAssign &ref: in-place via as_unverified_mut(), then assert
 
-impl<P: FpConfig<N>, const N: usize> Add for &Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize> Add for &Fp<P, N> {
     type Output = Fp<P, N>;
     #[inline]
     fn add(self, rhs: Self) -> Fp<P, N> {
-        (self.as_unreduced() + rhs.as_unreduced()).check()
+        (self.as_unverified() + rhs.as_unverified()).check()
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> Sub for &Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize> Sub for &Fp<P, N> {
     type Output = Fp<P, N>;
     #[inline]
     fn sub(self, rhs: Self) -> Fp<P, N> {
-        (self.as_unreduced() - rhs.as_unreduced()).check()
+        (self.as_unverified() - rhs.as_unverified()).check()
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> Mul for &Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize> Mul for &Fp<P, N> {
     type Output = Fp<P, N>;
     #[inline]
     fn mul(self, rhs: Self) -> Fp<P, N> {
-        (self.as_unreduced() * rhs.as_unreduced()).check()
+        (self.as_unverified() * rhs.as_unverified()).check()
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> Neg for &Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize> Neg for &Fp<P, N> {
     type Output = Fp<P, N>;
     #[inline]
     fn neg(self) -> Fp<P, N> {
-        self.as_unreduced().neg().check()
+        self.as_unverified().neg().check()
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
     #[inline]
     fn add_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unreduced_mut() += rhs.as_unreduced() };
-        assert!(self.inner.const_lt(&P::MODULUS), "non-canonical field element");
+        unsafe { *self.as_unverified_mut() += rhs.as_unverified() };
+        assert!(self.inner.const_lt(&P::MODULUS), "unverified field element >= modulus");
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
     #[inline]
     fn sub_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unreduced_mut() -= rhs.as_unreduced() };
-        assert!(self.inner.const_lt(&P::MODULUS), "non-canonical field element");
+        unsafe { *self.as_unverified_mut() -= rhs.as_unverified() };
+        assert!(self.inner.const_lt(&P::MODULUS), "unverified field element >= modulus");
     }
 }
 
-impl<P: FpConfig<N>, const N: usize> MulAssign<&Self> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize> MulAssign<&Self> for Fp<P, N> {
     #[inline]
     fn mul_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unreduced_mut() *= rhs.as_unreduced() };
-        assert!(self.inner.const_lt(&P::MODULUS), "non-canonical field element");
+        unsafe { *self.as_unverified_mut() *= rhs.as_unverified() };
+        assert!(self.inner.const_lt(&P::MODULUS), "unverified field element >= modulus");
     }
 }
 
@@ -319,8 +364,9 @@ mod tests {
 
     // Test field: F_7 (arbitrary small prime, independent of any curve).
     enum P {}
-    impl R0FieldConfig<8> for P {
+    impl FieldConfig<8> for P {
         const MODULUS: BigInt<8> = BigInt::from_u32(7);
+        type Ops = R0VMFieldOps;
     }
 
     type F = Fp256<P>;

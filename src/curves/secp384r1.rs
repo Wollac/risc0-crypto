@@ -7,17 +7,19 @@
 //! - Spec: <https://www.secg.org/sec2-v2.pdf> (section 2.5.1)
 
 use crate::{
-    AffinePoint, BigInt, CurveConfig, Fp, LIMBS_384, R0FieldConfig, R0VMCurveOps, bigint, fp,
+    AffinePoint, BigInt, CurveConfig, FieldConfig, Fp, LIMBS_384, R0VMCurveOps, R0VMFieldOps,
+    bigint, fp,
 };
 
 // --- Base field (Fq): coordinates, modulus = p ---
 
 pub enum FqConfig {}
 
-impl R0FieldConfig<LIMBS_384> for FqConfig {
+impl FieldConfig<LIMBS_384> for FqConfig {
     const MODULUS: BigInt<LIMBS_384> = bigint!(
         "0xfffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff"
     );
+    type Ops = R0VMFieldOps;
 }
 
 pub type Fq = Fp<FqConfig, LIMBS_384>;
@@ -26,10 +28,11 @@ pub type Fq = Fp<FqConfig, LIMBS_384>;
 
 pub enum FrConfig {}
 
-impl R0FieldConfig<LIMBS_384> for FrConfig {
+impl FieldConfig<LIMBS_384> for FrConfig {
     const MODULUS: BigInt<LIMBS_384> = bigint!(
         "0xffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973"
     );
+    type Ops = R0VMFieldOps;
 }
 
 pub type Fr = Fp<FrConfig, LIMBS_384>;
