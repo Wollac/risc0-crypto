@@ -100,8 +100,6 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
         assert!(!k.is_zero(), "nonce k must be nonzero");
 
-        let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
-
         // R = [k]G
         let r_pt = &AffinePoint::<C, N>::GENERATOR * k;
         // SAFETY: [k]G is not identity for nonzero k
@@ -113,12 +111,11 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
             return None;
         }
 
-        // s = k⁻¹ * (z + r * d) mod n
+        let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
+
+        // s = k⁻¹ * (r * d + z) mod n
         let k_inv = k.as_unverified().inverse();
-        let mut s = r.as_unverified() * d;
-        s += &z;
-        s *= &k_inv;
-        let s = s.check();
+        let s = (&k_inv * &(&(r.as_unverified() * d) + &z)).check();
         if s.is_zero() {
             return None;
         }
@@ -129,13 +126,13 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     /// Verifies this signature against a message hash and public key `pubkey`.
     ///
     /// `hash` is the big-endian digest output, reduced mod n to produce the scalar `z`.
-    /// The caller should ensure `pubkey` is a valid curve point (e.g. constructed via
-    /// [`AffinePoint::new`]).
+    /// `pubkey` must be in the prime-order subgroup (e.g. constructed via
+    /// [`AffinePoint::new_in_subgroup`]).
     pub fn verify(&self, pubkey: &AffinePoint<C, N>, hash: &[u8]) -> bool {
         let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
 
-        // u1 = z * s⁻¹, u2 = r * s⁻¹
-        let s_inv = self.s.inverse();
+        // u1 = z * s⁻¹, u2 = r * s⁻¹ (s is nonzero by construction)
+        let s_inv = self.s.as_unverified().inverse();
         let u1 = &s_inv * &z;
         let u2 = &s_inv * &self.r;
 
@@ -151,9 +148,6 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
 }
 
 /// Interprets a base field element as a scalar, reducing mod n.
-///
-/// Uses `reduce()` (not `check()`) because the base field value may legitimately exceed the
-/// scalar field modulus - this is a cross-field conversion, not a bigint2 result check.
 fn base_to_scalar<C: CurveConfig<N>, const N: usize>(x: BaseField<C, N>) -> ScalarField<C, N> {
     // ECDSA requires p < 2n so that x mod n has at most 2 preimages. We check the stricter
     // bit_len(n) >= bit_len(p) which is simpler and sufficient for all standard curves.
