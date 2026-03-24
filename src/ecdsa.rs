@@ -46,17 +46,11 @@ use crate::{
 
 /// An ECDSA signature `(r, s)` over curve `C`.
 #[derive(educe::Educe)]
-#[educe(Clone, PartialEq, Eq)]
+#[educe(Clone, Debug, PartialEq, Eq)]
 #[must_use]
 pub struct Signature<C: CurveConfig<N>, const N: usize> {
     r: ScalarField<C, N>,
     s: ScalarField<C, N>,
-}
-
-impl<C: CurveConfig<N>, const N: usize> core::fmt::Debug for Signature<C, N> {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.debug_struct("Signature").field("r", &self.r).field("s", &self.s).finish()
-    }
 }
 
 impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
@@ -67,24 +61,6 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
             return None;
         }
         Some(Self { r, s })
-    }
-
-    /// Returns the `r` component (x-coordinate of `[k]G`, reduced mod n).
-    #[inline]
-    pub const fn r(&self) -> &ScalarField<C, N> {
-        &self.r
-    }
-
-    /// Returns the `s` component.
-    #[inline]
-    pub const fn s(&self) -> &ScalarField<C, N> {
-        &self.s
-    }
-
-    /// Decomposes the signature into its `(r, s)` components.
-    #[inline]
-    pub const fn into_parts(self) -> (ScalarField<C, N>, ScalarField<C, N>) {
-        (self.r, self.s)
     }
 
     /// Signs a message hash with private key `d` and nonce `k`.
@@ -123,6 +99,24 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
         Some(Self { r, s })
     }
 
+    /// Returns the `r` component (x-coordinate of `[k]G`, reduced mod n).
+    #[inline]
+    pub const fn r(&self) -> &ScalarField<C, N> {
+        &self.r
+    }
+
+    /// Returns the `s` component.
+    #[inline]
+    pub const fn s(&self) -> &ScalarField<C, N> {
+        &self.s
+    }
+
+    /// Decomposes the signature into its `(r, s)` components.
+    #[inline]
+    pub const fn into_parts(self) -> (ScalarField<C, N>, ScalarField<C, N>) {
+        (self.r, self.s)
+    }
+
     /// Verifies this signature against a message hash and public key `pubkey`.
     ///
     /// `hash` is the big-endian digest output, reduced mod n to produce the scalar `z`.
@@ -144,6 +138,28 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
             return false;
         };
         base_to_scalar::<C, N>(rx) == self.r
+    }
+
+    /// Normalizes into "low S" form as described in [BIP 0062: Dealing with Malleability][1].
+    /// Returns `None` if already normalized.
+    ///
+    /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
+    #[inline]
+    pub fn normalize_s(&self) -> Option<Self> {
+        if self.s_is_high() { Some(Self { r: self.r, s: -&self.s }) } else { None }
+    }
+
+    /// Returns the signature in "low S" form, negating `s` if needed. See
+    /// [`normalize_s`](Self::normalize_s).
+    #[inline]
+    pub fn normalized_s(self) -> Self {
+        self.normalize_s().unwrap_or(self)
+    }
+
+    /// Returns `true` if `s > n/2` (high-s).
+    fn s_is_high(&self) -> bool {
+        // s > n/2 iff s > n - s (as integers), avoiding a stored half-order constant
+        self.s.as_bigint() > (-&self.s).as_bigint()
     }
 }
 
@@ -172,10 +188,28 @@ mod tests {
     const HASH: &[u8] = &[0xde, 0xad, 0xbe, 0xef];
 
     #[test]
+    fn new_rejects_zero_components() {
+        assert!(Sig::new(Fr::ZERO, Fr::ONE).is_none());
+        assert!(Sig::new(Fr::ONE, Fr::ZERO).is_none());
+        assert!(Sig::new(Fr::ZERO, Fr::ZERO).is_none());
+        assert!(Sig::new(Fr::ONE, Fr::ONE).is_some());
+    }
+
+    #[test]
     fn sign_verify_roundtrip() {
         let d: Fr = fp!("0xc9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
         let pubkey = &Affine::GENERATOR * &d;
         let k: Fr = fp!("0xa6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60");
+
+        let sig = Sig::sign(&d, &k, HASH).unwrap();
+        assert!(sig.verify(&pubkey, HASH));
+    }
+
+    #[test]
+    fn sign_with_zero_private_key() {
+        let d: Fr = Fr::ZERO;
+        let pubkey = &Affine::GENERATOR * &d;
+        let k: Fr = Fr::ONE;
 
         let sig = Sig::sign(&d, &k, HASH).unwrap();
         assert!(sig.verify(&pubkey, HASH));
@@ -202,20 +236,18 @@ mod tests {
     }
 
     #[test]
-    fn sign_with_zero_private_key() {
-        let d: Fr = Fr::ZERO;
-        let pubkey = &Affine::GENERATOR * &d;
-        let k: Fr = Fr::ONE;
-
+    fn normalize_s() {
+        let d: Fr = fp!("0x1");
+        let k: Fr = fp!("0x2");
         let sig = Sig::sign(&d, &k, HASH).unwrap();
-        assert!(sig.verify(&pubkey, HASH));
-    }
 
-    #[test]
-    fn new_rejects_zero_components() {
-        assert!(Sig::new(Fr::ZERO, Fr::ONE).is_none());
-        assert!(Sig::new(Fr::ONE, Fr::ZERO).is_none());
-        assert!(Sig::new(Fr::ZERO, Fr::ZERO).is_none());
-        assert!(Sig::new(Fr::ONE, Fr::ONE).is_some());
+        let normalized = sig.normalized_s();
+        assert!(normalized.normalize_s().is_none(), "already normalized");
+        assert!(normalized.verify(&(&Affine::GENERATOR * &d), HASH));
+
+        // manually flip s to get high-s, then normalize back
+        let high_s = Sig::new(*normalized.r(), -normalized.s()).unwrap();
+        assert!(high_s.normalize_s().is_some());
+        assert_eq!(high_s.normalized_s(), normalized);
     }
 }

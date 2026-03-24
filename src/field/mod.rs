@@ -327,7 +327,13 @@ impl<P: FieldConfig<N>, const N: usize> Neg for &Fp<P, N> {
     type Output = Fp<P, N>;
     #[inline]
     fn neg(self) -> Fp<P, N> {
-        self.as_unverified().neg().check()
+        if self.is_zero() {
+            return Fp::ZERO;
+        }
+        let mut result = P::MODULUS;
+        result -= self.as_bigint();
+        // SAFETY: self in (0, p) implies p - self in (0, p)
+        unsafe { Fp::from_bigint_unchecked(result) }
     }
 }
 
