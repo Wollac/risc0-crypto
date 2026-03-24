@@ -144,9 +144,14 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     /// Returns `None` if already normalized.
     ///
     /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
-    #[inline]
     pub fn normalize_s(&self) -> Option<Self> {
-        if self.s_is_high() { Some(Self { r: self.r, s: -&self.s }) } else { None }
+        // s > n/2 iff s > n - s (as integers), avoiding a stored half-order constant
+        let neg_s = -&self.s;
+        if self.s.as_bigint() > neg_s.as_bigint() {
+            Some(Self { r: self.r, s: neg_s })
+        } else {
+            None
+        }
     }
 
     /// Returns the signature in "low S" form, negating `s` if needed. See
@@ -154,12 +159,6 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     #[inline]
     pub fn normalized_s(self) -> Self {
         self.normalize_s().unwrap_or(self)
-    }
-
-    /// Returns `true` if `s > n/2` (high-s).
-    fn s_is_high(&self) -> bool {
-        // s > n/2 iff s > n - s (as integers), avoiding a stored half-order constant
-        self.s.as_bigint() > (-&self.s).as_bigint()
     }
 }
 
