@@ -46,7 +46,7 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 
 4. **Backend modules** (`src/field/ops.rs`, `src/curve/ops.rs`) - Each contains the FFI dispatch implementing `FieldOps` / `CurveOps` for the R0VM target. Replacing either module is all that's needed to retarget to a different backend.
 
-5. **`src/ecdsa.rs`** - ECDSA signing and verification over any `CurveConfig`. The `Signature<C, N>` struct holds `(r, s)` scalar field elements. The caller supplies the message hash (big-endian bytes, reduced mod n) and a per-signature random nonce - no hash functions or RNG are included. Curves where `bit_len(n) < bit_len(p)` (e.g. BLS12-381) are rejected at compile time. Cross-field conversion from the base field to the scalar field uses `Fp::reduce_from_bigint()` (not `.check()`), because the input is a legitimate field element that may exceed the scalar modulus, not a `risc0-bigint2` operation result.
+5. **`src/ecdsa.rs`** - ECDSA signing and verification over any `CurveConfig`. The `Signature<C, N>` struct holds `(r, s)` scalar field elements. The caller supplies the message hash (big-endian bytes, reduced mod n) and a per-signature random nonce - no hash functions or RNG are included. Curves where `bit_len(n) < bit_len(p)` (e.g. BLS12-381) are rejected at compile time. Cross-field conversion from the base field to the scalar field uses `Fp::reduce_from_bigint()` (not `.check()`), because the input is a legitimate field element that may exceed the scalar modulus, not a `risc0-bigint2` operation result. BIP-62 low-S normalization via `normalize_s()` / `normalized_s()`. Verification accepts both high and low S - low-S enforcement is the caller's responsibility.
 
 ### Supported Curves (`src/curves/`)
 
@@ -69,6 +69,7 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 - **Zero heap allocation**: all types are stack-allocated, `no_std` compatible
 - **Cofactor-1 optimization**: `COFACTOR` is a `&'static [u32]` LE slice on `CurveConfig`. Default `is_in_correct_subgroup()` and `clear_cofactor()` check `cofactor_is_one()` at compile time - cofactor-1 curves need no override
 - **`UnverifiedFp` check semantics**: `UnverifiedFp` holds possibly non-canonical field values from unconstrained VM operations. Arithmetic is always sound inside. When leaving the struct (extracting an `Fp` or producing a field-semantic `bool`), call `.check()` to assert the value is already canonical. For values that may not be canonical, use `Fp::reduce_from_bigint()`. The same check semantics apply to comparisons via `check_is_eq()`.
+- **`Fp` negation bypass**: `Neg for &Fp` computes `p - x` directly via BigInt subtraction rather than going through the R0VM backend. The result is canonical by construction (no `.check()` needed), saving a syscall + N limb comparisons.
 
 ## Style
 
