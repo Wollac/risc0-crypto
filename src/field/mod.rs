@@ -87,10 +87,15 @@ pub trait FieldConfig<const N: usize>: Sized + Send + Sync + 'static {
     /// Number of bits in the binary representation of the modulus.
     const MODULUS_BIT_LEN: u32 = Self::MODULUS.bit_len();
 
+    /// `floor(p / 2)` - the boundary between the "low" and "high" halves of the field.
+    #[doc(hidden)]
+    const HALF_MODULUS: BigInt<N> = Self::MODULUS.const_shr(1);
+
     /// `(p + 1) / 4`, used to compute sqrt when `p % 4 == 3`.
     ///
     /// The default implementation computes this from [`MODULUS`](Self::MODULUS) and asserts
     /// the congruence at compile time. Only evaluated when referenced.
+    #[doc(hidden)]
     const MODULUS_PLUS_ONE_DIV_FOUR: BigInt<N> = {
         assert!(Self::MODULUS.0[0] % 4 == 3, "MODULUS_PLUS_ONE_DIV_FOUR requires MODULUS % 4 == 3");
         Self::MODULUS.const_add_u32(1).const_shr(2)
@@ -224,6 +229,12 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
     #[inline]
     pub const fn is_zero(&self) -> bool {
         self.inner.const_eq(&Self::ZERO.inner)
+    }
+
+    /// Returns `true` if `self > (p - 1) / 2` (the "high" half of the field).
+    #[inline]
+    pub const fn is_high(&self) -> bool {
+        P::HALF_MODULUS.const_lt(&self.inner)
     }
 
     /// Computes `self⁻¹ mod p`. Panics if `self` is zero.

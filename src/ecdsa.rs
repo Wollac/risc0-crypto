@@ -135,10 +135,8 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     ///
     /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
     pub fn normalize_s(&self) -> Option<Self> {
-        // s > n/2 iff s > n - s (as integers), avoiding a stored half-order constant
-        let neg_s = -&self.s;
-        if self.s.as_bigint() > neg_s.as_bigint() {
-            Some(Self { r: self.r, s: neg_s })
+        if self.s.is_high() {
+            Some(Self { r: self.r, s: -&self.s })
         } else {
             None
         }
