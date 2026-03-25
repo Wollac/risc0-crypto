@@ -3,7 +3,6 @@ use crate::{
     field::{FieldConfig, FieldOps as _},
 };
 use core::{
-    cmp::Ordering,
     marker::PhantomData,
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
@@ -92,22 +91,15 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
     }
 
     /// Field equality using check semantics. Returns `true` if the raw integers are equal.
-    /// When they differ, asserts canonicality and returns `false` - panics if either value is
-    /// non-canonical. Only the larger value is explicitly checked: if the smaller were `>= p`,
-    /// the larger would also be `> p`, so a single check suffices.
+    /// When they differ, asserts both are canonical and returns `false`.
     #[inline]
     pub fn check_is_eq(&self, other: &Self) -> bool {
-        match self.inner.cmp(&other.inner) {
-            Ordering::Equal => true,
-            Ordering::Less => {
-                assert!(other.is_canonical(), "unverified field element >= modulus");
-                false
-            }
-            Ordering::Greater => {
-                assert!(self.is_canonical(), "unverified field element >= modulus");
-                false
-            }
+        if self.raw_eq(other) {
+            return true;
         }
+        assert!(self.is_canonical(), "unverified field element >= modulus");
+        assert!(other.is_canonical(), "unverified field element >= modulus");
+        false
     }
 
     /// Reinterprets `&self` as `&Fp` without checking canonicality.

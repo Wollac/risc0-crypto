@@ -189,14 +189,12 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
     pub const ONE: Self = P::ONE;
     /// The field modulus (`p`).
     pub const MODULUS: BigInt<N> = P::MODULUS;
-    /// Number of bits in the binary representation of the modulus.
-    pub const MODULUS_BIT_LEN: u32 = P::MODULUS_BIT_LEN;
 
     /// Shift factor for processing byte slices in chunks of `N * 4 - 1` bytes.
-    const CHUNK_BASE: UnverifiedFp<P, N> = {
+    const CHUNK_BASE: BigInt<N> = {
         let mut limbs = [0u32; N];
         limbs[N - 1] = 1 << (u32::BITS - 8);
-        UnverifiedFp::from_bigint(BigInt::new(limbs))
+        BigInt::new(limbs)
     };
 
     /// Creates a field element from a [`BigInt`], returning `None` if the value is `>= p`.
@@ -290,7 +288,7 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
         let mut result = UnverifiedFp::from_bigint(BigInt::from_be_bytes(first));
         for chunk in chunks.rev() {
             let chunk_val = UnverifiedFp::from_bigint(BigInt::from_be_bytes(chunk));
-            result *= &Self::CHUNK_BASE;
+            result *= UnverifiedFp::wrap_ref(&Self::CHUNK_BASE);
             result += &chunk_val;
         }
         // chunks is non-empty (early return above), so the loop reduces and .check() is sound
@@ -313,11 +311,18 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
         let mut result = UnverifiedFp::from_bigint(BigInt::from_le_bytes(first));
         for chunk in chunks.rev() {
             let chunk_val = UnverifiedFp::from_bigint(BigInt::from_le_bytes(chunk));
-            result *= &Self::CHUNK_BASE;
+            result *= UnverifiedFp::wrap_ref(&Self::CHUNK_BASE);
             result += &chunk_val;
         }
         // chunks is non-empty (early return above), so the loop reduces and .check() is sound
         result.check()
+    }
+}
+
+impl<P, const N: usize> From<Fp<P, N>> for BigInt<N> {
+    #[inline]
+    fn from(fp: Fp<P, N>) -> Self {
+        fp.inner
     }
 }
 
@@ -370,29 +375,29 @@ impl<P: FieldConfig<N>, const N: usize> Neg for &Fp<P, N> {
     }
 }
 
-impl<P: FieldConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> AddAssign<&T> for Fp<P, N> {
     #[inline]
-    fn add_assign(&mut self, rhs: &Self) {
+    fn add_assign(&mut self, rhs: &T) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unverified_mut() += rhs.as_unverified() };
+        unsafe { *self.as_unverified_mut() += rhs.as_ref() };
         assert!(self.inner < P::MODULUS, "unverified field element >= modulus");
     }
 }
 
-impl<P: FieldConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> SubAssign<&T> for Fp<P, N> {
     #[inline]
-    fn sub_assign(&mut self, rhs: &Self) {
+    fn sub_assign(&mut self, rhs: &T) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unverified_mut() -= rhs.as_unverified() };
+        unsafe { *self.as_unverified_mut() -= rhs.as_ref() };
         assert!(self.inner < P::MODULUS, "unverified field element >= modulus");
     }
 }
 
-impl<P: FieldConfig<N>, const N: usize> MulAssign<&Self> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> MulAssign<&T> for Fp<P, N> {
     #[inline]
-    fn mul_assign(&mut self, rhs: &Self) {
+    fn mul_assign(&mut self, rhs: &T) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unverified_mut() *= rhs.as_unverified() };
+        unsafe { *self.as_unverified_mut() *= rhs.as_ref() };
         assert!(self.inner < P::MODULUS, "unverified field element >= modulus");
     }
 }

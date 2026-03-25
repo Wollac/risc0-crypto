@@ -48,7 +48,7 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
 
 5. **`src/ecdsa.rs`** - ECDSA signing, verification, and public key recovery over any `CurveConfig`. The caller supplies the message hash (big-endian bytes, reduced mod n) and a per-signature random nonce - no hash functions or RNG are included. Curves where `bit_len(n) < bit_len(p)` (e.g. BLS12-381) are rejected at compile time via `base_to_scalar`.
    - `Signature<C, N>` - plain `(r, s)` with `sign`, `verify`, and BIP-62 low-S normalization. Verification accepts both high and low S - low-S enforcement is the caller's responsibility.
-   - `RecoverableSignature<C, N>` - wraps `Signature` + `RecoveryId` (2 bits: y parity + x reduction). `sign` auto-normalizes to low-S. `verify` is "recovery with a hint" - checks the signature and recovery ID against a provided public key, no point decompression (sqrt) needed.
+   - `RecoverableSignature<C, N>` - wraps `Signature` + `RecoveryId` (2 bits: y parity + x reduction). `sign` does **not** auto-normalize - call `normalized_s()` for Ethereum/Bitcoin compatibility. `verify` is "recovery with a hint"; `recover` performs full public key recovery via point decompression.
    - Cross-field conversion from the base field to the scalar field uses `Fp::reduce_from_bigint()` (not `.check()`), because the input is a legitimate field element that may exceed the scalar modulus, not a `risc0-bigint2` operation result.
 
 ### Supported Curves (`src/curves/`)

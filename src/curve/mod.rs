@@ -271,6 +271,18 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         }
     }
 
+    /// Computes `x³ + ax + b` (the RHS of the curve equation).
+    #[inline(always)]
+    fn curve_rhs(x: &UnverifiedBaseField<C, N>) -> UnverifiedBaseField<C, N> {
+        let mut rhs = x * x;
+        if !C::COEFF_A.is_zero() {
+            rhs += &C::COEFF_A;
+        }
+        rhs *= x;
+        rhs += &C::COEFF_B;
+        rhs
+    }
+
     /// Checks whether `(x, y)` satisfies the curve equation `y² = x³ + ax + b`.
     #[must_use]
     pub fn is_on_curve(&self) -> bool {
@@ -279,7 +291,8 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         };
 
         let lhs = y * y;
-
+        // intentionally not using `curve_rhs` - inlining avoids a return-value copy that
+        // costs ~15% on the R0VM target (verified via godbolt for P-256/P-384)
         let mut rhs = x * x;
         if !C::COEFF_A.is_zero() {
             rhs += &C::COEFF_A;
@@ -288,6 +301,28 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         rhs += &C::COEFF_B;
 
         lhs.check_is_eq(&rhs)
+    }
+
+    /// Returns the two y-coordinates on the curve for the given `x`, or `None` if no point
+    /// with that x-coordinate exists. Returns `(y_even, y_odd)`.
+    ///
+    /// The corresponding points are on the curve but not necessarily in the prime-order
+    /// subgroup.
+    pub fn ys_from_x(
+        x: impl AsRef<UnverifiedBaseField<C, N>>,
+    ) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
+        let y = Self::curve_rhs(x.as_ref()).sqrt()?.check();
+        let neg_y = -&y;
+        if y.as_bigint().is_even() { Some((y, neg_y)) } else { Some((neg_y, y)) }
+    }
+
+    /// Decompresses a point from its x-coordinate and y-parity bit, or `None` if no point
+    /// with that x-coordinate exists.
+    ///
+    /// The returned point is on the curve but not necessarily in the prime-order subgroup.
+    pub fn decompress(x: BaseField<C, N>, is_y_odd: bool) -> Option<Self> {
+        let (y_even, y_odd) = Self::ys_from_x(x)?;
+        Some(Self::from_xy(x, if is_y_odd { y_odd } else { y_even }))
     }
 
     /// Returns `true` if this point is in the prime-order subgroup.
@@ -602,6 +637,31 @@ mod tests {
 
         // [2]G matches known point
         assert_eq!(&g * &two, pt(2, 5));
+    }
+
+    #[test]
+    fn ys_from_x() {
+        let fq = Fq::from_u32;
+
+        // x = 0: y² = 1, roots are 1 (odd) and 6 (even) -> (even, odd) = (6, 1)
+        let (y_even, y_odd) = Affine::ys_from_x(fq(0)).unwrap();
+        assert!(y_even.as_bigint().is_even());
+        assert!(y_odd.as_bigint().is_odd());
+        assert_eq!((y_even, y_odd), (fq(6), fq(1)));
+
+        // x = 2: roots are 2 (even) and 5 (odd)
+        let (y_even, y_odd) = Affine::ys_from_x(fq(2)).unwrap();
+        assert!(y_even.as_bigint().is_even());
+        assert!(y_odd.as_bigint().is_odd());
+        assert_eq!(&y_even * &y_even, &y_odd * &y_odd);
+
+        // no curve point at x = 1
+        assert!(Affine::ys_from_x(fq(1)).is_none());
+
+        // decompress roundtrip
+        assert_eq!(Affine::decompress(fq(0), false), Some(pt(0, 6)));
+        assert_eq!(Affine::decompress(fq(0), true), Some(pt(0, 1)));
+        assert!(Affine::decompress(fq(1), false).is_none());
     }
 
     #[test]

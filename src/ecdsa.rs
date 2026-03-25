@@ -29,6 +29,25 @@
 //! assert!(sig.verify(&pubkey, hash));
 //! ```
 //!
+//! # Ethereum / EIP-2 compatible signatures
+//!
+//! Ethereum requires low-S normalization ([EIP-2]) and rejects `is_x_reduced` recovery IDs
+//! (v must be 27 or 28). Normalize after signing and check:
+//!
+//! ```no_run
+//! # use risc0_crypto::{ecdsa::RecoverableSignature, curves::secp256k1::{self, Fr}};
+//! # let (d, k, hash): (Fr, Fr, &[u8]) = (Fr::ONE, Fr::ONE, &[0u8; 32]);
+//! #
+//! let rsig =
+//!     RecoverableSignature::<secp256k1::Config, 8>::sign(&d, &k, hash).unwrap().normalized_s();
+//!
+//! // Ethereum v = 27 + is_y_odd (is_x_reduced must be false for secp256k1)
+//! assert!(!rsig.recovery_id().is_x_reduced());
+//! let v = 27u8 + rsig.recovery_id().is_y_odd() as u8;
+//! ```
+//!
+//! [EIP-2]: https://eips.ethereum.org/EIPS/eip-2
+//!
 //! # Curve compatibility
 //!
 //! ECDSA requires the scalar field order `n` to be close in size to the base field order `p`.
@@ -135,11 +154,7 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     ///
     /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
     pub fn normalize_s(&self) -> Option<Self> {
-        if self.s.is_high() {
-            Some(Self { r: self.r, s: -&self.s })
-        } else {
-            None
-        }
+        if self.s.is_high() { Some(Self { r: self.r, s: -&self.s }) } else { None }
     }
 
     /// Returns the signature in "low S" form, negating `s` if needed. See
@@ -238,8 +253,8 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
 
     /// Signs a message hash with private key `d` and nonce `k`, producing a recoverable signature.
     ///
-    /// The returned signature is always in low-S normalized form (BIP-62), with the recovery ID
-    /// adjusted accordingly.
+    /// The returned signature is **not** automatically normalized to low-S. Call
+    /// [`normalized_s`](Self::normalized_s) if your protocol requires it (e.g. Ethereum/Bitcoin).
     ///
     /// # Panics
     ///
@@ -251,15 +266,7 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
         let is_x_reduced = x.as_bigint() >= &C::ScalarFieldConfig::MODULUS;
         let is_y_odd = y.as_bigint().is_odd();
 
-        let mut result =
-            Self { sig: Signature { r, s }, recovery_id: RecoveryId::new(is_y_odd, is_x_reduced) };
-
-        // auto-normalize to low-S; negating s flips nonce parity
-        if let Some(normalized) = result.normalize_s() {
-            result = normalized;
-        }
-
-        Some(result)
+        Some(Self { sig: Signature { r, s }, recovery_id: RecoveryId::new(is_y_odd, is_x_reduced) })
     }
 
     /// Returns the inner [`Signature`].
@@ -305,6 +312,38 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
 
         // standard ECDSA check: R'.x mod n == r
         base_to_scalar::<C, N>(rx) == self.sig.r
+    }
+
+    /// Recovers the public key from this signature, recovery ID, and message hash.
+    ///
+    /// Given `(r, s, v, hash)`, returns the unique public key `Q` such that `(r, s)` is a
+    /// valid ECDSA signature on `hash` under `Q` with recovery ID `v`. Returns `None` if the
+    /// recovery ID is inconsistent (e.g., no curve point at the recovered x-coordinate).
+    pub fn recover(&self, hash: &[u8]) -> Option<AffinePoint<C, N>> {
+        // reconstruct R.x in the base field
+        let rx = if self.recovery_id.is_x_reduced() {
+            // original R.x was >= n, so R.x = r + n; reject if r + n overflows or >= p
+            let rx = self.sig.r.as_bigint() + &C::ScalarFieldConfig::MODULUS;
+            if &rx < self.sig.r.as_bigint() {
+                return None; // r + n overflowed N limbs
+            }
+            BaseField::<C, N>::from_bigint(rx)?
+        } else if C::ScalarFieldConfig::MODULUS.const_lt(&C::BaseFieldConfig::MODULUS) {
+            // SAFETY: n < p, so r < n < p is a valid base field element
+            unsafe { BaseField::<C, N>::from_bigint_unchecked(self.sig.r.into()) }
+        } else {
+            // n >= p: r < p for legitimate signatures
+            BaseField::<C, N>::from_bigint(self.sig.r.into())?
+        };
+        let r_pt = AffinePoint::<C, N>::decompress(rx, self.recovery_id.is_y_odd())?;
+
+        // Q = [r⁻¹]([s]R - [z]G)
+        let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
+        let r_inv = self.sig.r.as_unverified().inverse();
+        let u1 = &r_inv * &self.sig.s; // [s * r⁻¹] for R
+        let u2 = &r_inv * &z; // [z * r⁻¹] for G
+
+        Some(&(&r_pt * &u1) - &(&AffinePoint::GENERATOR * &u2))
     }
 
     /// Normalizes into "low S" form, adjusting the recovery ID accordingly. Returns `None` if
@@ -476,9 +515,6 @@ mod tests {
 
             let rsig = RSig::sign(&d, &k, HASH).unwrap();
 
-            // signature is always low-S
-            assert!(rsig.normalize_s().is_none(), "sign should auto-normalize");
-
             // standard verify still works via inner signature
             assert!(rsig.signature().verify(&pubkey, HASH));
 
@@ -519,6 +555,44 @@ mod tests {
             let rsig = RSig::sign(&d, &k, HASH).unwrap();
             let wrong_pk = &Affine::GENERATOR * &Fr::from_u32(2);
             assert!(!rsig.verify(&wrong_pk, HASH));
+        }
+
+        #[test]
+        fn recover_pubkey() {
+            let d: Fr = fp!("0xc9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721");
+            let pubkey = &Affine::GENERATOR * &d;
+            let k: Fr = fp!("0xa6e3c57dd01abe90086538398355dd4c3b17aa873382b0f24d6129493d8aad60");
+
+            let rsig = RSig::sign(&d, &k, HASH).unwrap();
+            let recovered = rsig.recover(HASH).unwrap();
+            assert_eq!(recovered, pubkey);
+        }
+
+        #[test]
+        fn recover_wrong_hash() {
+            let d: Fr = fp!("0x1");
+            let pubkey = &Affine::GENERATOR * &d;
+            let k: Fr = fp!("0x2");
+
+            let rsig = RSig::sign(&d, &k, HASH).unwrap();
+            let recovered = rsig.recover(&[0xff]).unwrap();
+            assert_ne!(recovered, pubkey);
+        }
+
+        #[test]
+        fn recover_x_reduced() {
+            let x_reduced = RecoveryId::new(false, true);
+
+            // r = 2: smallest r where x = r + n is on secp256k1 (verified offline)
+            let sig = Sig::new(Fr::from_u32(2), Fr::ONE).unwrap();
+            let rsig = RecoverableSignature::new(sig, x_reduced);
+            let pk = rsig.recover(HASH).expect("r + n should be on the curve for r = 2");
+            assert!(rsig.signature().verify(&pk, HASH));
+
+            // r = p - n: r + n = p, must be rejected (>= p)
+            let sig = Sig::new(fp!("0x14551231950b75fc4402da1722fc9baee"), Fr::ONE).unwrap();
+            let rsig = RecoverableSignature::new(sig, x_reduced);
+            assert!(rsig.recover(HASH).is_none());
         }
     }
 }

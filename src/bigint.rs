@@ -1,6 +1,6 @@
 use core::{
     cmp::Ordering,
-    ops::{AddAssign, SubAssign},
+    ops::{Add, AddAssign, Sub, SubAssign},
 };
 
 /// A fixed-size `N * 32`-bit integer stored as `N` little-endian `u32` limbs.
@@ -335,8 +335,18 @@ impl<const N: usize> Ord for BigInt<N> {
     }
 }
 
+impl<const N: usize> Add for &BigInt<N> {
+    type Output = BigInt<N>;
+    #[inline]
+    fn add(self, other: Self) -> BigInt<N> {
+        let mut result = *self;
+        result += other;
+        result
+    }
+}
+
 impl<const N: usize> AddAssign<&Self> for BigInt<N> {
-    #[inline(always)]
+    #[inline]
     fn add_assign(&mut self, other: &Self) {
         let mut carry = false;
         for i in 0..N {
@@ -345,8 +355,18 @@ impl<const N: usize> AddAssign<&Self> for BigInt<N> {
     }
 }
 
+impl<const N: usize> Sub for &BigInt<N> {
+    type Output = BigInt<N>;
+    #[inline]
+    fn sub(self, other: Self) -> BigInt<N> {
+        let mut result = *self;
+        result -= other;
+        result
+    }
+}
+
 impl<const N: usize> SubAssign<&Self> for BigInt<N> {
-    #[inline(always)]
+    #[inline]
     fn sub_assign(&mut self, rhs: &Self) {
         let mut borrow = false;
         for i in 0..N {
