@@ -80,28 +80,7 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     ///
     /// Panics if `k` is zero.
     pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
-        assert!(!k.is_zero(), "nonce k must be nonzero");
-
-        // R = [k]G
-        let r_pt = &AffinePoint::<C, N>::GENERATOR * k;
-        // SAFETY: [k]G is not identity for nonzero k
-        let (x, _) = unsafe { r_pt.xy().unwrap_unchecked() };
-
-        // r = R.x mod n
-        let r = base_to_scalar::<C, N>(x);
-        if r.is_zero() {
-            return None;
-        }
-
-        let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
-
-        // s = k⁻¹ * (r * d + z) mod n
-        let k_inv = k.as_unverified().inverse();
-        let s = (&k_inv * &(&(r.as_unverified() * d) + &z)).check();
-        if s.is_zero() {
-            return None;
-        }
-
+        let (r, s, ..) = sign_raw::<C, N>(d, k, hash)?;
         Some(Self { r, s })
     }
 
@@ -268,31 +247,11 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
     ///
     /// Panics if `k` is zero.
     pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
-        assert!(!k.is_zero(), "nonce k must be nonzero");
-
-        // R = [k]G
-        let r_pt = &AffinePoint::<C, N>::GENERATOR * k;
-        // SAFETY: [k]G is not identity for nonzero k
-        let (x, y) = unsafe { r_pt.xy().unwrap_unchecked() };
-
-        // r = R.x mod n
-        let r = base_to_scalar::<C, N>(x);
-        if r.is_zero() {
-            return None;
-        }
+        let (r, s, x, y) = sign_raw::<C, N>(d, k, hash)?;
 
         // x < p < 2n (enforced by base_to_scalar), so one bit suffices for recovery
         let is_x_reduced = x.as_bigint() >= &C::ScalarFieldConfig::MODULUS;
         let is_y_odd = y.as_bigint().is_odd();
-
-        let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
-
-        // s = k⁻¹ * (r * d + z) mod n
-        let k_inv = k.as_unverified().inverse();
-        let s = (&k_inv * &(&(r.as_unverified() * d) + &z)).check();
-        if s.is_zero() {
-            return None;
-        }
 
         let mut result =
             Self { sig: Signature { r, s }, recovery_id: RecoveryId::new(is_y_odd, is_x_reduced) };
@@ -363,6 +322,41 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
     pub fn normalized_s(self) -> Self {
         self.normalize_s().unwrap_or(self)
     }
+}
+
+/// `(r, s, R.x, R.y)` from the core signing computation.
+type SignRaw<C, const N: usize> =
+    (ScalarField<C, N>, ScalarField<C, N>, BaseField<C, N>, BaseField<C, N>);
+
+/// Core ECDSA signing computation. Returns `(r, s, R.x, R.y)`. Panics if `k` is zero.
+fn sign_raw<C: CurveConfig<N>, const N: usize>(
+    d: &ScalarField<C, N>,
+    k: &ScalarField<C, N>,
+    hash: &[u8],
+) -> Option<SignRaw<C, N>> {
+    assert!(!k.is_zero(), "nonce k must be nonzero");
+
+    // R = [k]G
+    let r_pt = &AffinePoint::<C, N>::GENERATOR * k;
+    // SAFETY: [k]G is not identity for nonzero k
+    let (x, y) = unsafe { r_pt.xy().unwrap_unchecked() };
+
+    // r = R.x mod n
+    let r = base_to_scalar::<C, N>(x);
+    if r.is_zero() {
+        return None;
+    }
+
+    let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
+
+    // s = k⁻¹ * (r * d + z) mod n
+    let k_inv = k.as_unverified().inverse();
+    let s = (&k_inv * &(&(r.as_unverified() * d) + &z)).check();
+    if s.is_zero() {
+        return None;
+    }
+
+    Some((r, s, x, y))
 }
 
 /// Interprets a base field element as a scalar, reducing mod n.
