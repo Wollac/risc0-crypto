@@ -1,7 +1,7 @@
 mod ops;
 mod unverified;
 
-use crate::{BigInt, LIMBS_256, LIMBS_384};
+use crate::{BigInt, BitAccess, LIMBS_256, LIMBS_384};
 use bytemuck::TransparentWrapper;
 use core::{
     marker::PhantomData,
@@ -86,6 +86,15 @@ pub trait FieldConfig<const N: usize>: Sized + Send + Sync + 'static {
 
     /// Number of bits in the binary representation of the modulus.
     const MODULUS_BIT_LEN: u32 = Self::MODULUS.bit_len();
+
+    /// `(p + 1) / 4`, used to compute sqrt when `p % 4 == 3`.
+    ///
+    /// The default implementation computes this from [`MODULUS`](Self::MODULUS) and asserts
+    /// the congruence at compile time. Only evaluated when referenced.
+    const MODULUS_PLUS_ONE_DIV_FOUR: BigInt<N> = {
+        assert!(Self::MODULUS.0[0] % 4 == 3, "MODULUS_PLUS_ONE_DIV_FOUR requires MODULUS % 4 == 3");
+        Self::MODULUS.const_add_u32(1).const_shr(2)
+    };
 
     /// Additive identity of the field.
     const ZERO: Fp<Self, N> = {
@@ -223,11 +232,24 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
         self.as_unverified().inverse().check()
     }
 
+    /// Computes `self^exp mod p` via square-and-multiply.
+    #[inline]
+    pub fn pow(&self, exp: &(impl BitAccess + ?Sized)) -> Self {
+        self.as_unverified().pow(exp).check()
+    }
+
+    /// Computes a square root mod p. Returns `None` if `self` is not a quadratic residue.
+    /// Only available when `p % 4 == 3` (enforced at compile time).
+    #[inline]
+    pub fn sqrt(&self) -> Option<Self> {
+        self.as_unverified().sqrt().map(UnverifiedFp::check)
+    }
+
     /// Mathematically reduces an arbitrary [`BigInt`] into a valid field element in `[0, p)`.
     #[inline]
     pub fn reduce_from_bigint(mut b: BigInt<N>) -> Self {
         // fast path: already canonical
-        if b.const_lt(&P::MODULUS) {
+        if b < P::MODULUS {
             return unsafe { Self::from_bigint_unchecked(b) };
         }
 
@@ -342,7 +364,7 @@ impl<P: FieldConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
     fn add_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unverified_mut() += rhs.as_unverified() };
-        assert!(self.inner.const_lt(&P::MODULUS), "unverified field element >= modulus");
+        assert!(self.inner < P::MODULUS, "unverified field element >= modulus");
     }
 }
 
@@ -351,7 +373,7 @@ impl<P: FieldConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
     fn sub_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unverified_mut() -= rhs.as_unverified() };
-        assert!(self.inner.const_lt(&P::MODULUS), "unverified field element >= modulus");
+        assert!(self.inner < P::MODULUS, "unverified field element >= modulus");
     }
 }
 
@@ -360,7 +382,7 @@ impl<P: FieldConfig<N>, const N: usize> MulAssign<&Self> for Fp<P, N> {
     fn mul_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unverified_mut() *= rhs.as_unverified() };
-        assert!(self.inner.const_lt(&P::MODULUS), "unverified field element >= modulus");
+        assert!(self.inner < P::MODULUS, "unverified field element >= modulus");
     }
 }
 
@@ -457,5 +479,28 @@ mod tests {
             F::from_le_bytes_mod_order(&[0x01, 0x02]),
             F::from_be_bytes_mod_order(&[0x02, 0x01]),
         );
+    }
+
+    #[test]
+    fn pow_and_sqrt() {
+        let two = F::from_u32(2);
+        // pow: 2³ = 8 = 1 mod 7
+        assert_eq!(two.pow(&BigInt::<1>::from_u32(3)), F::ONE);
+        // Fermat's little theorem: a^(p-1) = 1
+        assert_eq!(two.pow(&BigInt::<1>::from_u32(6)), F::ONE);
+        // a^0 = 1
+        assert_eq!(two.pow(&BigInt::<1>::ZERO), F::ONE);
+
+        // sqrt: quadratic residues in F_7 are {0, 1, 2, 4}
+        // sqrt(0) = 0, sqrt(1) = 1 or 6, sqrt(2) = 3 or 4, sqrt(4) = 2 or 5
+        assert_eq!(F::ZERO.sqrt(), Some(F::ZERO));
+        for a in [1u32, 2, 4] {
+            let root = F::from_u32(a).sqrt().unwrap();
+            assert_eq!(&root * &root, F::from_u32(a));
+        }
+        // non-residues: {3, 5, 6}
+        for a in [3u32, 5, 6] {
+            assert!(F::from_u32(a).sqrt().is_none());
+        }
     }
 }

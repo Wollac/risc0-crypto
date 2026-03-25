@@ -196,9 +196,7 @@ impl<const N: usize> BigInt<N> {
     }
 
     /// Equality comparison usable in `const` contexts.
-    ///
-    /// Equivalent to `==` but available in `const fn` where `PartialEq` cannot be used.
-    #[inline]
+    #[doc(hidden)]
     pub const fn const_eq(&self, other: &Self) -> bool {
         let mut i = 0;
         while i < N {
@@ -211,9 +209,7 @@ impl<const N: usize> BigInt<N> {
     }
 
     /// Unsigned less-than comparison, usable in `const` contexts.
-    ///
-    /// Equivalent to `<` but available in `const fn` where `PartialOrd` cannot be used.
-    #[inline]
+    #[doc(hidden)]
     pub const fn const_lt(&self, other: &Self) -> bool {
         let mut i = N;
         while i > 0 {
@@ -223,6 +219,38 @@ impl<const N: usize> BigInt<N> {
             }
         }
         false
+    }
+
+    /// Add a `u32`, panicking on overflow. Chainable.
+    #[doc(hidden)]
+    pub const fn const_add_u32(self, rhs: u32) -> Self {
+        let mut out = self;
+        let mut carry = rhs;
+        let mut i = 0;
+        while i < N && carry > 0 {
+            let (v, c) = out.0[i].overflowing_add(carry);
+            out.0[i] = v;
+            carry = c as u32;
+            i += 1;
+        }
+        assert!(carry == 0, "BigInt overflow in const_add_u32");
+        out
+    }
+
+    /// Right-shift by `shift` bits (`shift` must be in 1..32). Chainable.
+    #[doc(hidden)]
+    pub const fn const_shr(self, shift: u32) -> Self {
+        assert!(shift >= 1 && shift < Self::LIMB_BITS as u32);
+        let mut out = [0u32; N];
+        let mut i = 0;
+        while i < N {
+            out[i] = self.0[i] >> shift;
+            if i + 1 < N {
+                out[i] |= self.0[i + 1] << (Self::LIMB_BITS as u32 - shift);
+            }
+            i += 1;
+        }
+        Self(out)
     }
 }
 
@@ -429,6 +457,35 @@ mod tests {
             "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
         );
         assert_eq!(n.bit_len(), 256);
+    }
+
+    #[test]
+    fn const_add_u32() {
+        assert_eq!(BigInt::<8>::ZERO.const_add_u32(1), BigInt::<8>::ONE);
+        // carry across limb boundary
+        assert_eq!(BigInt::<2>::new([u32::MAX, 0]).const_add_u32(1), BigInt::<2>::new([0, 1]),);
+        // chaining
+        assert_eq!(BigInt::<8>::ZERO.const_add_u32(1).const_add_u32(1), BigInt::<8>::from_u32(2));
+    }
+
+    #[test]
+    fn const_shr() {
+        // single-bit shift
+        assert_eq!(BigInt::<8>::from_u32(0b1010).const_shr(1), BigInt::<8>::from_u32(0b101));
+        // multi-bit shift
+        assert_eq!(BigInt::<8>::from_u32(0xff00).const_shr(8), BigInt::<8>::from_u32(0xff));
+        // bits flow across limb boundary
+        assert_eq!(
+            BigInt::<2>::from_hex("0x00000001_80000000").const_shr(1),
+            BigInt::<2>::from_hex("0x00000000_c0000000"),
+        );
+        // chaining: shift by 4 twice == shift by 8
+        assert_eq!(
+            BigInt::<8>::from_u32(0xff00).const_shr(4).const_shr(4),
+            BigInt::<8>::from_u32(0xff),
+        );
+        // chaining with const_eq
+        assert!(BigInt::<8>::from_u32(2).const_shr(1).const_eq(&BigInt::<8>::ONE));
     }
 
     #[test]

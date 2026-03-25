@@ -1,5 +1,5 @@
 use crate::{
-    BigInt, Fp,
+    BigInt, BitAccess, Fp,
     field::{FieldConfig, FieldOps as _},
 };
 use core::{
@@ -130,10 +130,40 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
         P::Ops::neg_in_place(self);
     }
 
+    /// Computes `self² mod p` in place.
+    #[inline]
+    pub(crate) fn square_in_place(&mut self) {
+        *self = P::Ops::mul(self, self);
+    }
+
     /// Computes `self⁻¹ mod p`. Panics if `self` is zero.
     #[inline]
     pub fn inverse(&self) -> Self {
         P::Ops::inv(self)
+    }
+
+    /// Computes `self^exp mod p` via square-and-multiply.
+    pub fn pow(&self, exp: &(impl BitAccess + ?Sized)) -> Self {
+        let n = exp.bits();
+        if n == 0 {
+            return Fp::ONE.into();
+        }
+        let mut acc = *self;
+        for i in (0..n - 1).rev() {
+            acc.square_in_place();
+            if exp.bit(i) {
+                acc.mul_assign(self);
+            }
+        }
+        acc
+    }
+
+    /// Computes a square root mod p via `self^((p+1)/4)`. Returns `None` if `self` is not a
+    /// quadratic residue. Only available when `p % 4 == 3` (enforced at compile time).
+    #[inline]
+    pub fn sqrt(&self) -> Option<Self> {
+        let root = self.pow(&P::MODULUS_PLUS_ONE_DIV_FOUR);
+        if (&root * &root).check_is_eq(self) { Some(root) } else { None }
     }
 }
 
