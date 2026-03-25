@@ -156,6 +156,18 @@ impl<const N: usize> BigInt<N> {
         bytemuck::cast_slice(&self.0)
     }
 
+    /// Returns `true` if the value is even (least significant bit is clear).
+    #[inline]
+    pub const fn is_even(&self) -> bool {
+        self.0[0] & 1 == 0
+    }
+
+    /// Returns `true` if the value is odd (least significant bit is set).
+    #[inline]
+    pub const fn is_odd(&self) -> bool {
+        !self.is_even()
+    }
+
     /// Returns `true` if the most significant bit is set.
     #[inline]
     pub const fn msb_set(&self) -> bool {
