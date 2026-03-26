@@ -111,13 +111,6 @@ where
     }
 
     #[inline]
-    fn neg_in_place(a: &mut Uf<P, N>) {
-        let ptr = cast_ptr_mut(ptr::from_mut(a));
-        // SAFETY: out aliases a per FieldFfi contract.
-        unsafe { FieldFfi::sys_sub(&BigInt::ZERO, ptr, &P::MODULUS, ptr) }
-    }
-
-    #[inline]
     fn inv(a: &Uf<P, N>) -> Uf<P, N> {
         // SAFETY: out is fully written by sys_inv before assume_init.
         unsafe {
@@ -125,6 +118,20 @@ where
             FieldFfi::sys_inv(cast_ptr(a), &P::MODULUS, cast_ptr_mut(out.as_mut_ptr()));
             out.assume_init()
         }
+    }
+
+    #[inline]
+    fn neg_in_place(a: &mut Uf<P, N>) {
+        let ptr = cast_ptr_mut(ptr::from_mut(a));
+        // SAFETY: out aliases a per FieldFfi contract.
+        unsafe { FieldFfi::sys_sub(&BigInt::ZERO, ptr, &P::MODULUS, ptr) }
+    }
+
+    #[inline]
+    fn square_in_place(a: &mut Uf<P, N>) {
+        let ptr = cast_ptr_mut(ptr::from_mut(a));
+        // SAFETY: out aliases a per FieldFfi contract; sys_mul reads all inputs before writing.
+        unsafe { FieldFfi::sys_mul(ptr, ptr, &P::MODULUS, ptr) }
     }
 
     #[inline]

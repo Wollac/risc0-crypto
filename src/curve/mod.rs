@@ -271,16 +271,12 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         }
     }
 
-    /// Computes `x³ + ax + b` (the RHS of the curve equation).
+    /// Adds [`COEFF_A`](CurveConfig::COEFF_A) in place, skipped at compile time when `a == 0`.
     #[inline(always)]
-    fn curve_rhs(x: &UnverifiedBaseField<C, N>) -> UnverifiedBaseField<C, N> {
-        let mut rhs = x * x;
+    fn add_a(val: &mut UnverifiedBaseField<C, N>) {
         if !C::COEFF_A.is_zero() {
-            rhs += &C::COEFF_A;
+            *val += &C::COEFF_A;
         }
-        rhs *= x;
-        rhs += &C::COEFF_B;
-        rhs
     }
 
     /// Checks whether `(x, y)` satisfies the curve equation `y² = x³ + ax + b`.
@@ -291,12 +287,8 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         };
 
         let lhs = y * y;
-        // intentionally not using `curve_rhs` - inlining avoids a return-value copy that
-        // costs ~15% on the R0VM target (verified via godbolt for P-256/P-384)
         let mut rhs = x * x;
-        if !C::COEFF_A.is_zero() {
-            rhs += &C::COEFF_A;
-        }
+        Self::add_a(&mut rhs);
         rhs *= x;
         rhs += &C::COEFF_B;
 
@@ -311,7 +303,14 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     pub fn ys_from_x(
         x: impl AsRef<UnverifiedBaseField<C, N>>,
     ) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
-        let y = Self::curve_rhs(x.as_ref()).sqrt()?.check();
+        // y² = x³ + ax + b
+        let x = x.as_ref();
+        let mut rhs = x * x;
+        Self::add_a(&mut rhs);
+        rhs *= x;
+        rhs += &C::COEFF_B;
+
+        let y = rhs.sqrt()?.check();
         let neg_y = -&y;
         if y.as_bigint().is_even() { Some((y, neg_y)) } else { Some((neg_y, y)) }
     }

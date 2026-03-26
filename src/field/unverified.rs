@@ -3,6 +3,7 @@ use crate::{
     field::{FieldConfig, FieldOps as _},
 };
 use core::{
+    cmp::Ordering,
     marker::PhantomData,
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
@@ -94,12 +95,17 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
     /// When they differ, asserts both are canonical and returns `false`.
     #[inline]
     pub fn check_is_eq(&self, other: &Self) -> bool {
-        if self.raw_eq(other) {
-            return true;
+        match self.inner.cmp(&other.inner) {
+            Ordering::Equal => true,
+            Ordering::Less => {
+                assert!(other.is_canonical(), "unverified field element >= modulus");
+                false
+            }
+            Ordering::Greater => {
+                assert!(self.is_canonical(), "unverified field element >= modulus");
+                false
+            }
         }
-        assert!(self.is_canonical(), "unverified field element >= modulus");
-        assert!(other.is_canonical(), "unverified field element >= modulus");
-        false
     }
 
     /// Reinterprets `&self` as `&Fp` without checking canonicality.
@@ -124,8 +130,8 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
 
     /// Computes `self² mod p` in place.
     #[inline]
-    pub(crate) fn square_in_place(&mut self) {
-        *self = P::Ops::mul(self, self);
+    pub fn square_in_place(&mut self) {
+        P::Ops::square_in_place(self);
     }
 
     /// Computes `self⁻¹ mod p`. Panics if `self` is zero.

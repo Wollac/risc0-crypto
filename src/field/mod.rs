@@ -16,9 +16,9 @@ type Uf<P, const N: usize> = UnverifiedFp<P, N>;
 
 /// Field arithmetic operations for a prime field.
 ///
-/// All methods are safe - unsafe FFI is contained within the backend implementation. The
-/// `_assign` / in-place variants are the required primitives; non-assign variants have default
-/// implementations that copy and delegate.
+/// All methods are safe - unsafe FFI is contained within the backend implementation. The four
+/// required primitives are `add_assign`, `sub_assign`, `mul_assign`, and `inv`; all other
+/// methods have default implementations that delegate to these.
 pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
     /// Computes `a + b mod p` in place.
     fn add_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
@@ -26,11 +26,21 @@ pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
     fn sub_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
     /// Computes `a * b mod p` in place.
     fn mul_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
-    /// Computes `a = 0 - a mod p` in place.
-    fn neg_in_place(a: &mut Uf<P, N>);
 
     /// Computes `a⁻¹ mod p`. Panics if `a` is zero.
     fn inv(a: &Uf<P, N>) -> Uf<P, N>;
+
+    /// Computes `a = 0 - a mod p` in place.
+    #[inline]
+    fn neg_in_place(a: &mut Uf<P, N>) {
+        *a = Self::sub(Uf::wrap_ref(&BigInt::ZERO), a);
+    }
+
+    /// Computes `a² mod p` in place.
+    #[inline]
+    fn square_in_place(a: &mut Uf<P, N>) {
+        *a = Self::mul(a, a);
+    }
 
     /// Non-assign version of [`add_assign`](Self::add_assign).
     #[inline]
@@ -68,7 +78,7 @@ pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
     #[inline]
     fn reduce(a: &Uf<P, N>) -> Fp<P, N> {
         // a + 0 mod p forces reduction as a side effect
-        Self::add(a, &Uf::from_bigint(BigInt::ZERO)).check()
+        Self::add(a, Uf::wrap_ref(&BigInt::ZERO)).check()
     }
 }
 
