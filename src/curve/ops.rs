@@ -20,19 +20,15 @@ use risc0_bigint2::ffi::{sys_bigint2_3, sys_bigint2_4};
 /// # Safety
 ///
 /// For every method:
-/// - All pointer arguments must be readable and aligned.
 /// - `out` must point to writable, aligned memory (need not be initialized).
-/// - `out` may alias `lhs`/`rhs`/`point` - the FFI reads all inputs before writing.
+/// - `out` must NOT alias inputs. EC circuits use multiple `EqualZeroOp` constraints whose
+///   verify-program kWrite to the output arena corrupts subsequent kReads from an aliased input
+///   arena during proving. Taking inputs by reference enforces non-aliasing at the call site.
 trait CurveFfi: Sized {
     /// Chord rule: `out = lhs + rhs` on the curve `c = [modulus, a, b]`.
-    unsafe fn sys_ec_add(
-        lhs: *const [Self; 2],
-        rhs: *const [Self; 2],
-        c: &[Self; 3],
-        out: *mut [Self; 2],
-    );
+    unsafe fn sys_ec_add(lhs: &[Self; 2], rhs: &[Self; 2], c: &[Self; 3], out: *mut [Self; 2]);
     /// Tangent rule: `out = [2]point` on the curve `c = [modulus, a, b]`.
-    unsafe fn sys_ec_double(point: *const [Self; 2], c: &[Self; 3], out: *mut [Self; 2]);
+    unsafe fn sys_ec_double(point: &[Self; 2], c: &[Self; 3], out: *mut [Self; 2]);
 }
 
 impl CurveFfi for BigInt<8>
@@ -40,20 +36,15 @@ where
     Self: TransparentWrapper<[u32; 8]>,
 {
     #[inline(always)]
-    unsafe fn sys_ec_add(
-        lhs: *const [Self; 2],
-        rhs: *const [Self; 2],
-        c: &[Self; 3],
-        out: *mut [Self; 2],
-    ) {
+    unsafe fn sys_ec_add(lhs: &[Self; 2], rhs: &[Self; 2], c: &[Self; 3], out: *mut [Self; 2]) {
         const BLOB: &[u8] = include_bytes_aligned!(4, concat!(env!("OUT_DIR"), "/ec_add_256.blob"));
         // SAFETY: BigInt<8> is repr(transparent) over [u32; 8] (bound above), so [BigInt<8>; K]
         // is a contiguous [u32; 8*K] - safe to cast to *const u32 for the syscall.
         unsafe {
             sys_bigint2_4(
                 BLOB.as_ptr(),
-                lhs.cast(),
-                rhs.cast(),
+                ptr::from_ref(lhs).cast(),
+                ptr::from_ref(rhs).cast(),
                 ptr::from_ref(c).cast(),
                 out.cast(),
             )
@@ -61,11 +52,18 @@ where
     }
 
     #[inline(always)]
-    unsafe fn sys_ec_double(point: *const [Self; 2], c: &[Self; 3], out: *mut [Self; 2]) {
+    unsafe fn sys_ec_double(point: &[Self; 2], c: &[Self; 3], out: *mut [Self; 2]) {
         const BLOB: &[u8] =
             include_bytes_aligned!(4, concat!(env!("OUT_DIR"), "/ec_double_256.blob"));
         // SAFETY: see sys_ec_add
-        unsafe { sys_bigint2_3(BLOB.as_ptr(), point.cast(), ptr::from_ref(c).cast(), out.cast()) }
+        unsafe {
+            sys_bigint2_3(
+                BLOB.as_ptr(),
+                ptr::from_ref(point).cast(),
+                ptr::from_ref(c).cast(),
+                out.cast(),
+            )
+        }
     }
 }
 
@@ -74,20 +72,15 @@ where
     Self: TransparentWrapper<[u32; 12]>,
 {
     #[inline(always)]
-    unsafe fn sys_ec_add(
-        lhs: *const [Self; 2],
-        rhs: *const [Self; 2],
-        c: &[Self; 3],
-        out: *mut [Self; 2],
-    ) {
+    unsafe fn sys_ec_add(lhs: &[Self; 2], rhs: &[Self; 2], c: &[Self; 3], out: *mut [Self; 2]) {
         const BLOB: &[u8] = include_bytes_aligned!(4, concat!(env!("OUT_DIR"), "/ec_add_384.blob"));
         // SAFETY: BigInt<12> is repr(transparent) over [u32; 12] (bound above), so [BigInt<12>; K]
         // is a contiguous [u32; 12*K] - safe to cast to *const u32 for the syscall.
         unsafe {
             sys_bigint2_4(
                 BLOB.as_ptr(),
-                lhs.cast(),
-                rhs.cast(),
+                ptr::from_ref(lhs).cast(),
+                ptr::from_ref(rhs).cast(),
                 ptr::from_ref(c).cast(),
                 out.cast(),
             )
@@ -95,17 +88,28 @@ where
     }
 
     #[inline(always)]
-    unsafe fn sys_ec_double(point: *const [Self; 2], c: &[Self; 3], out: *mut [Self; 2]) {
+    unsafe fn sys_ec_double(point: &[Self; 2], c: &[Self; 3], out: *mut [Self; 2]) {
         const BLOB: &[u8] =
             include_bytes_aligned!(4, concat!(env!("OUT_DIR"), "/ec_double_384.blob"));
         // SAFETY: see sys_ec_add
-        unsafe { sys_bigint2_3(BLOB.as_ptr(), point.cast(), ptr::from_ref(c).cast(), out.cast()) }
+        unsafe {
+            sys_bigint2_3(
+                BLOB.as_ptr(),
+                ptr::from_ref(point).cast(),
+                ptr::from_ref(c).cast(),
+                out.cast(),
+            )
+        }
     }
 }
 
-/// Const pointer cast for a coordinate pair, guarded by [`TransparentWrapper`].
-const fn cast_coords<T: TransparentWrapper<Inner>, Inner>(ptr: *const [T; 2]) -> *const [Inner; 2] {
-    ptr.cast()
+/// Reference cast for a coordinate pair, guarded by [`TransparentWrapper`].
+///
+/// # Safety
+///
+/// `[T; 2]` and `[Inner; 2]` have identical layout because `T: TransparentWrapper<Inner>`.
+const fn cast_coords_ref<T: TransparentWrapper<Inner>, Inner>(r: &[T; 2]) -> &[Inner; 2] {
+    unsafe { &*ptr::from_ref(r).cast() }
 }
 
 /// Mutable pointer cast for a coordinate pair, guarded by [`TransparentWrapper`].
@@ -131,17 +135,28 @@ where
     BigInt<N>: CurveFfi,
 {
     #[inline]
-    fn add_assign(a: &mut Coords<C, N>, b: &Coords<C, N>) {
-        let ptr = cast_coords_mut(ptr::from_mut(a));
-        // SAFETY: out aliases a per CurveFfi contract.
-        unsafe { CurveFfi::sys_ec_add(ptr, cast_coords(ptr::from_ref(b)), &C::CURVE_PARAMS, ptr) }
+    fn add_into(a: &Coords<C, N>, b: &Coords<C, N>, out: &mut Coords<C, N>) {
+        // SAFETY: out is &mut so it cannot alias a or b (Rust borrow rules).
+        unsafe {
+            CurveFfi::sys_ec_add(
+                cast_coords_ref(a),
+                cast_coords_ref(b),
+                &C::CURVE_PARAMS,
+                cast_coords_mut(ptr::from_mut(out)),
+            );
+        }
     }
 
     #[inline]
-    fn double_assign(a: &mut Coords<C, N>) {
-        let ptr = cast_coords_mut(ptr::from_mut(a));
-        // SAFETY: out aliases a per CurveFfi contract.
-        unsafe { CurveFfi::sys_ec_double(ptr, &C::CURVE_PARAMS, ptr) }
+    fn double_into(a: &Coords<C, N>, out: &mut Coords<C, N>) {
+        // SAFETY: out is &mut so it cannot alias a (Rust borrow rules).
+        unsafe {
+            CurveFfi::sys_ec_double(
+                cast_coords_ref(a),
+                &C::CURVE_PARAMS,
+                cast_coords_mut(ptr::from_mut(out)),
+            );
+        }
     }
 
     #[inline]
@@ -150,8 +165,8 @@ where
         // SAFETY: out is fully written by sys_ec_add before assume_init.
         unsafe {
             CurveFfi::sys_ec_add(
-                cast_coords(ptr::from_ref(a)),
-                cast_coords(ptr::from_ref(b)),
+                cast_coords_ref(a),
+                cast_coords_ref(b),
                 &C::CURVE_PARAMS,
                 cast_coords_mut(out.as_mut_ptr()),
             );
@@ -165,7 +180,7 @@ where
         // SAFETY: out is fully written by sys_ec_double before assume_init.
         unsafe {
             CurveFfi::sys_ec_double(
-                cast_coords(ptr::from_ref(a)),
+                cast_coords_ref(a),
                 &C::CURVE_PARAMS,
                 cast_coords_mut(out.as_mut_ptr()),
             );
@@ -178,7 +193,6 @@ where
 mod tests {
     use super::*;
     use crate::{bigint, curves::secp256k1};
-    use core::ptr::from_mut;
 
     type C = secp256k1::Config;
 
@@ -200,26 +214,20 @@ mod tests {
     ];
 
     #[test]
-    fn ec_add_aliasing() {
-        // G + 2G = 3G, aliasing lhs
-        let mut a = G;
-        let ptr = from_mut(&mut a);
-        unsafe { CurveFfi::sys_ec_add(ptr, &TWO_G, &CURVE, ptr) };
-        assert_eq!(a, THREE_G);
+    fn ec_add_non_aliased() {
+        let mut out = G;
+        unsafe { CurveFfi::sys_ec_add(&G, &TWO_G, &CURVE, &mut out) };
+        assert_eq!(out, THREE_G);
 
-        // 2G + G = 3G, aliasing lhs
-        let mut a = TWO_G;
-        let ptr = from_mut(&mut a);
-        unsafe { CurveFfi::sys_ec_add(ptr, &G, &CURVE, ptr) };
-        assert_eq!(a, THREE_G);
+        let mut out = G;
+        unsafe { CurveFfi::sys_ec_add(&TWO_G, &G, &CURVE, &mut out) };
+        assert_eq!(out, THREE_G);
     }
 
     #[test]
-    fn ec_double_aliasing() {
-        // [2]G = 2G, aliasing input
-        let mut a = G;
-        let ptr = from_mut(&mut a);
-        unsafe { CurveFfi::sys_ec_double(ptr, &CURVE, ptr) };
-        assert_eq!(a, TWO_G);
+    fn ec_double_non_aliased() {
+        let mut out = G;
+        unsafe { CurveFfi::sys_ec_double(&G, &CURVE, &mut out) };
+        assert_eq!(out, TWO_G);
     }
 }

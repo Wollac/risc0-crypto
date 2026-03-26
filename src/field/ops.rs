@@ -23,15 +23,19 @@ use risc0_bigint2::field::unchecked::{
 ///
 /// # Safety
 ///
-/// For every method:
+/// For `sys_add`, `sys_sub`, `sys_mul`:
 /// - All pointer arguments must be readable and aligned.
 /// - `out` must point to writable, aligned memory (need not be initialized).
 /// - `out` may alias `a` or `b` - the FFI reads all inputs before writing.
+///
+/// For `sys_inv`:
+/// - `out` must point to writable, aligned memory (need not be initialized).
+/// - `out` must NOT alias `a`.
 trait FieldFfi {
     unsafe fn sys_add(a: *const Self, b: *const Self, m: &Self, out: *mut Self);
     unsafe fn sys_sub(a: *const Self, b: *const Self, m: &Self, out: *mut Self);
     unsafe fn sys_mul(a: *const Self, b: *const Self, m: &Self, out: *mut Self);
-    unsafe fn sys_inv(a: *const Self, m: &Self, out: *mut Self);
+    unsafe fn sys_inv(a: &Self, m: &Self, out: *mut Self);
 }
 
 impl FieldFfi for BigInt<8> {
@@ -48,8 +52,8 @@ impl FieldFfi for BigInt<8> {
         unsafe { modmul_256(&(*a).0, &(*b).0, &m.0, &mut (*out).0) }
     }
     #[inline(always)]
-    unsafe fn sys_inv(a: *const Self, m: &Self, out: *mut Self) {
-        unsafe { modinv_256(&(*a).0, &m.0, &mut (*out).0) }
+    unsafe fn sys_inv(a: &Self, m: &Self, out: *mut Self) {
+        unsafe { modinv_256(&a.0, &m.0, &mut (*out).0) }
     }
 }
 
@@ -67,8 +71,8 @@ impl FieldFfi for BigInt<12> {
         unsafe { modmul_384(&(*a).0, &(*b).0, &m.0, &mut (*out).0) }
     }
     #[inline(always)]
-    unsafe fn sys_inv(a: *const Self, m: &Self, out: *mut Self) {
-        unsafe { modinv_384(&(*a).0, &m.0, &mut (*out).0) }
+    unsafe fn sys_inv(a: &Self, m: &Self, out: *mut Self) {
+        unsafe { modinv_384(&a.0, &m.0, &mut (*out).0) }
     }
 }
 
@@ -115,7 +119,7 @@ where
         // SAFETY: out is fully written by sys_inv before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
-            FieldFfi::sys_inv(cast_ptr(a), &P::MODULUS, cast_ptr_mut(out.as_mut_ptr()));
+            FieldFfi::sys_inv(a.as_bigint(), &P::MODULUS, cast_ptr_mut(out.as_mut_ptr()));
             out.assume_init()
         }
     }
@@ -241,13 +245,5 @@ mod tests {
         let ptr = from_mut(&mut b);
         unsafe { FieldFfi::sys_mul(&A, ptr, &M, ptr) };
         assert_eq!(b, BigInt::from_u32(1));
-    }
-
-    #[test]
-    fn inv_aliasing() {
-        let mut a = A;
-        let ptr = from_mut(&mut a);
-        unsafe { FieldFfi::sys_inv(ptr, &M, ptr) };
-        assert_eq!(a, BigInt::from_u32(5)); // 3⁻¹ mod 7 = 5
     }
 }
