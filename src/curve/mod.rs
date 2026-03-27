@@ -392,6 +392,10 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     }
 
     /// Returns `self + rhs`. By-value counterpart of [`add_into`](Self::add_into).
+    ///
+    /// Duplicates the match logic from `add_into` rather than delegating - the extra copy
+    /// through `add_into`'s `&mut self` output parameter measurably hurts R0VM performance
+    /// (~50%).
     #[inline(always)]
     fn add(&self, rhs: &Self) -> Self {
         match (self.identity, rhs.identity) {
