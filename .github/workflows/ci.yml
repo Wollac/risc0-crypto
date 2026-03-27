@@ -58,7 +58,7 @@ jobs:
           export PATH="$HOME/.risc0/bin:$PATH"
           rzup install rust
           rzup install cpp
-          rzup install r0vm
+          rzup install r0vm 3.0.5
 
       - name: Install cargo-risczero from branch
         run: >
