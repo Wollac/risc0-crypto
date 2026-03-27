@@ -39,6 +39,36 @@ jobs:
           components: rustfmt
       - run: cargo +nightly fmt -- --check
 
+  test:
+    name: Guest Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install rzup
+        run: curl -L https://risczero.com/install | bash
+
+      - name: Install risc0 toolchain
+        run: |
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.risc0/bin:$PATH"
+          rzup install rust
+          rzup install cpp
+          rzup install r0vm
+
+      - name: Install cargo-risczero from branch
+        run: >
+          cargo install cargo-risczero
+          --git https://github.com/risc0/risc0.git
+          --branch victor/feb12-af1f67c8
+          --features experimental
+          --force
+
+      - name: Run guest tests
+        run: cargo risczero guest test
+
   doc:
     name: Doc
     runs-on: ubuntu-latest
