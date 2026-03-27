@@ -38,9 +38,10 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
    - **On-curve invariant**: every `AffinePoint` satisfies `y² = x³ + ax + b` (or is identity). Subgroup membership is not enforced.
    - Constructors: `new()` (on-curve check), `new_in_subgroup()` (on-curve + subgroup), `unsafe new_unchecked()` (external), `pub(crate) from_xy()` (internal)
    - `CurveConfig<N>` trait: implement to define a new curve (base/scalar field configs, coefficients A/B, generator, cofactor, `type Ops` for backend)
-   - `CurveOps<C, N>` trait: EC arithmetic interface (`add`, `double` + in-place variants). `R0VMCurveOps` is the R0VM backend.
+   - `CurveOps<C, N>` trait: EC arithmetic interface (`add_into`/`double_into` write into `&mut Coords`; `add`/`double` return by value). `R0VMCurveOps` is the R0VM backend.
    - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul)
-   - Inherent methods `double()` / `double_assign()` for explicit point doubling
+   - Inherent methods: `double()` / `double_into()` for doubling, `add_into()` for addition into a target buffer. Scalar multiplication uses double-buffered `_into` calls.
+   - `AffinePoint` stores `Coords + bool` (not `Option<Coords>`) so `_into` methods always have a writable coords buffer, even for identity points.
    - Coordinates may not be canonical after arithmetic - access via `xy()` / `xy_ref()` (check) or `xy_unverified()` (deferred)
    - EC operations in `R0VMCurveOps` call `sys_bigint2_3`/`sys_bigint2_4` directly with pre-compiled circuit blobs (copied from `risc0-bigint2` into `OUT_DIR` by `build.rs` - see that file for rationale)
 
@@ -73,6 +74,7 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 - **Cofactor-1 optimization**: `COFACTOR` is a `&'static [u32]` LE slice on `CurveConfig`. Default `is_in_correct_subgroup()` and `clear_cofactor()` check `cofactor_is_one()` at compile time - cofactor-1 curves need no override
 - **`UnverifiedFp` check semantics**: `UnverifiedFp` holds possibly non-canonical field values from unconstrained VM operations. Arithmetic is always sound inside. When leaving the struct (extracting an `Fp` or producing a field-semantic `bool`), call `.check()` to assert the value is already canonical. For values that may not be canonical, use `Fp::reduce_from_bigint()`. The same check semantics apply to comparisons via `check_is_eq()`.
 - **`Fp` negation bypass**: `Neg for &Fp` computes `p - x` directly via BigInt subtraction rather than going through the R0VM backend. The result is canonical by construction (no `.check()` needed), saving a syscall + N limb comparisons.
+- **No input/output aliasing for EC and field inverse**: EC circuit blobs have multiple `EqualZeroOp` constraints; during proving, a kWrite to the output arena in an earlier constraint corrupts kReads from an aliased input arena ("Bad carry"). Field inverse has the same multi-constraint structure but is coincidentally safe due to zirgen Flattener operand ordering - not a structural guarantee. Both `CurveFfi` and `FieldFfi::sys_inv` take inputs by reference to enforce non-aliasing at the type level.
 
 ## Style
 
