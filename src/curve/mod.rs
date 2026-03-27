@@ -392,7 +392,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     }
 
     /// Returns `self + rhs`. By-value counterpart of [`add_into`](Self::add_into).
-    #[inline]
+    #[inline(always)]
     fn add(&self, rhs: &Self) -> Self {
         match (self.identity, rhs.identity) {
             (_, true) => *self,
