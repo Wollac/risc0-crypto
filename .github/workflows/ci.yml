@@ -65,7 +65,17 @@ jobs:
           rzup install cpp
           rzup install r0vm 3.0.5
 
+      - name: Cache cargo-risczero
+        id: cache-risczero
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-risczero
+            ~/.cargo/bin/r0vm
+          key: cargo-risczero-victor-feb12-af1f67c8
+
       - name: Install cargo-risczero from branch
+        if: steps.cache-risczero.outputs.cache-hit != 'true'
         run: >
           cargo install cargo-risczero
           --git https://github.com/risc0/risc0.git
