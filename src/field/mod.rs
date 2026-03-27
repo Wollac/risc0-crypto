@@ -390,7 +390,9 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> AddAssign<
     fn add_assign(&mut self, rhs: &T) {
         // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unverified_mut() += rhs.as_ref() };
-        assert!(self.inner < P::MODULUS, "unverified field element >= modulus");
+        if self.inner >= P::MODULUS {
+            unverified::canonical_panic();
+        }
     }
 }
 
@@ -399,7 +401,9 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> SubAssign<
     fn sub_assign(&mut self, rhs: &T) {
         // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unverified_mut() -= rhs.as_ref() };
-        assert!(self.inner < P::MODULUS, "unverified field element >= modulus");
+        if self.inner >= P::MODULUS {
+            unverified::canonical_panic();
+        }
     }
 }
 
@@ -408,7 +412,9 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> MulAssign<
     fn mul_assign(&mut self, rhs: &T) {
         // SAFETY: the assert restores the Fp invariant.
         unsafe { *self.as_unverified_mut() *= rhs.as_ref() };
-        assert!(self.inner < P::MODULUS, "unverified field element >= modulus");
+        if self.inner >= P::MODULUS {
+            unverified::canonical_panic();
+        }
     }
 }
 
