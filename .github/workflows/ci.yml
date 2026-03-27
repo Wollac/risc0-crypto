@@ -5,6 +5,10 @@ on:
     branches: [main]
   pull_request:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -38,6 +42,48 @@ jobs:
         with:
           components: rustfmt
       - run: cargo +nightly fmt -- --check
+
+  test:
+    name: Guest Test
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Install rzup
+        run: curl -L https://risczero.com/install | bash
+
+      - name: Install risc0 toolchain
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.risc0/bin:$PATH"
+          rzup install rust
+          rzup install cpp
+
+      - name: Cache cargo-risczero
+        id: cache-risczero
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin/cargo-risczero
+            ~/.cargo/bin/r0vm
+          key: cargo-risczero-victor-feb12-af1f67c8
+
+      - name: Install cargo-risczero from branch
+        if: steps.cache-risczero.outputs.cache-hit != 'true'
+        run: >
+          cargo install cargo-risczero
+          --git https://github.com/risc0/risc0.git
+          --branch victor/feb12-af1f67c8
+          --features experimental
+          --force
+
+      - name: Run guest tests
+        run: cargo risczero guest test
 
   doc:
     name: Doc
