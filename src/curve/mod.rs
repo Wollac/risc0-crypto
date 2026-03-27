@@ -27,13 +27,11 @@ pub type Coords<C, const N: usize> = [UnverifiedBaseField<C, N>; 2];
 
 /// EC arithmetic operations for a short Weierstrass curve.
 ///
-/// All methods are safe - unsafe FFI is contained within the backend implementation. The
-/// `_assign` / in-place variants are the required primitives; non-assign variants have default
-/// implementations that copy and delegate.
+/// All methods are safe - unsafe FFI is contained within the backend implementation.
 pub trait CurveOps<C: CurveConfig<N>, const N: usize>: Send + Sync + 'static {
-    /// Computes `a + b` in place (chord rule).
+    /// Computes `a + b` and writes the result into `out` (chord rule).
     ///
-    /// Where `a = (x₁, y₁)` and `b = (x₂, y₂)`:
+    /// Where `a = (x₁, y₁)`, `b = (x₂, y₂)`, and `out = (x₃, y₃)`:
     ///
     /// ```text
     /// λ  = (y₂ - y₁) / (x₂ - x₁)
@@ -41,42 +39,41 @@ pub trait CurveOps<C: CurveConfig<N>, const N: usize>: Send + Sync + 'static {
     /// y₃ = λ(x₁ - x₃) - y₁
     /// ```
     ///
-    /// # Preconditions
+    /// # Panics
     ///
-    /// The caller must ensure `x₁ != x₂`. When `x₁ == x₂` the chord formula divides by zero.
-    /// Handle same-x cases (doubling, inverse) before calling.
-    fn add_assign(a: &mut Coords<C, N>, b: &Coords<C, N>);
+    /// Panics when `x₁ == x₂ mod p` - the chord formula divides by zero. Handle same-x cases
+    /// (doubling, inverse) before calling.
+    fn add_into(a: &Coords<C, N>, b: &Coords<C, N>, out: &mut Coords<C, N>);
 
-    /// Computes `[2]a` in place (tangent rule).
+    /// Computes `[2]a` and writes the result into `out` (tangent rule).
     ///
-    /// Where `a = (x₁, y₁)`:
+    /// Where `a = (x, y)` and `out = (x₂, y₂)`:
     ///
     /// ```text
-    /// λ  = (3x₁² + a) / (2y₁)
-    /// x₃ = λ² - 2x₁
-    /// y₃ = λ(x₁ - x₃) - y₁
+    /// λ  = (3x² + a) / (2y)
+    /// x₂ = λ² - 2x
+    /// y₂ = λ(x - x₂) - y
     /// ```
     ///
-    /// # Preconditions
+    /// # Panics
     ///
-    /// The caller must ensure `y != 0`. When `y == 0` the tangent formula divides by `2y`.
-    fn double_assign(a: &mut Coords<C, N>);
+    /// Panics when `y == 0 mod p` - the tangent formula divides by `2y`.
+    fn double_into(a: &Coords<C, N>, out: &mut Coords<C, N>);
 
-    /// Non-assign version of [`add_assign`](Self::add_assign). Same preconditions apply.
+    /// By-value version of [`add_into`](Self::add_into). Same panic conditions apply.
     #[inline]
     fn add(a: &Coords<C, N>, b: &Coords<C, N>) -> Coords<C, N> {
-        let mut r = *a;
-        Self::add_assign(&mut r, b);
-        r
+        let mut out = *a;
+        Self::add_into(a, b, &mut out);
+        out
     }
 
-    /// Non-assign version of [`double_assign`](Self::double_assign). Same preconditions
-    /// apply.
+    /// By-value version of [`double_into`](Self::double_into). Same panic conditions apply.
     #[inline]
     fn double(a: &Coords<C, N>) -> Coords<C, N> {
-        let mut r = *a;
-        Self::double_assign(&mut r);
-        r
+        let mut out = *a;
+        Self::double_into(a, &mut out);
+        out
     }
 }
 
@@ -172,17 +169,26 @@ mod cofactor {
 #[educe(Copy, Clone)]
 #[must_use]
 pub struct AffinePoint<C: CurveConfig<N>, const N: usize> {
-    /// `None` represents the point at infinity (identity). Coordinates are canonical (`< p`)
-    /// after construction; arithmetic operations may produce non-canonical results. Access via
-    /// `xy()` / `xy_ref()` (check - asserts canonical) or `xy_unverified()` (defers to caller).
-    coords: Option<Coords<C, N>>,
+    /// Coordinate buffer. Always present; contents are meaningless when `identity` is true.
+    /// Coordinates are canonical (`< p`) after construction; arithmetic operations may produce
+    /// non-canonical results. Access via `xy()` / `xy_ref()` (check - asserts canonical) or
+    /// `xy_unverified()` (defers to caller).
+    coords: Coords<C, N>,
+    /// `true` for the point at infinity. When set, `coords` is a scratch buffer - do not read.
+    identity: bool,
 }
 
 // --- Constants and constructors ---
 
 impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// The point at infinity (additive identity).
-    pub const IDENTITY: Self = Self { coords: None };
+    pub const IDENTITY: Self = Self {
+        coords: [
+            UnverifiedFp::from_bigint(crate::BigInt::ZERO),
+            UnverifiedFp::from_bigint(crate::BigInt::ZERO),
+        ],
+        identity: true,
+    };
 
     /// The curve's standard generator point.
     pub const GENERATOR: Self = C::GENERATOR;
@@ -221,17 +227,47 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     #[inline]
     pub(crate) const fn from_xy(x: BaseField<C, N>, y: BaseField<C, N>) -> Self {
         Self {
-            coords: Some([
+            coords: [
                 UnverifiedFp::from_bigint(x.to_bigint()),
                 UnverifiedFp::from_bigint(y.to_bigint()),
-            ]),
+            ],
+            identity: false,
         }
+    }
+
+    /// Returns the two y-coordinates on the curve for the given `x`, or `None` if no point
+    /// with that x-coordinate exists. Returns `(y_even, y_odd)`.
+    ///
+    /// The corresponding points are on the curve but not necessarily in the prime-order
+    /// subgroup.
+    pub fn ys_from_x(
+        x: impl AsRef<UnverifiedBaseField<C, N>>,
+    ) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
+        // y² = x³ + ax + b
+        let x = x.as_ref();
+        let mut rhs = x * x;
+        Self::add_a(&mut rhs);
+        rhs *= x;
+        rhs += &C::COEFF_B;
+
+        let y = rhs.sqrt()?.check();
+        let neg_y = -&y;
+        if y.as_bigint().is_even() { Some((y, neg_y)) } else { Some((neg_y, y)) }
+    }
+
+    /// Decompresses a point from its x-coordinate and y-parity bit, or `None` if no point
+    /// with that x-coordinate exists.
+    ///
+    /// The returned point is on the curve but not necessarily in the prime-order subgroup.
+    pub fn decompress(x: BaseField<C, N>, is_y_odd: bool) -> Option<Self> {
+        let (y_even, y_odd) = Self::ys_from_x(x)?;
+        Some(Self::from_xy(x, if is_y_odd { y_odd } else { y_even }))
     }
 
     /// Returns `true` if this is the point at infinity.
     #[inline]
     pub const fn is_identity(&self) -> bool {
-        self.coords.is_none()
+        self.identity
     }
 
     /// Returns the `(x, y)` coordinates as [`Fp`] values, or `None` for the identity.
@@ -239,10 +275,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// Panics if either coordinate is not in `[0, p)`.
     #[inline(always)]
     pub const fn xy(&self) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
-        match &self.coords {
-            None => None,
-            &Some([x, y]) => Some((x.check(), y.check())),
-        }
+        if self.identity { None } else { Some((self.coords[0].check(), self.coords[1].check())) }
     }
 
     /// Returns the `(x, y)` coordinates as [`Fp`] references, or `None` for the identity.
@@ -251,9 +284,10 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// Panics if either coordinate is not in `[0, p)`.
     #[inline(always)]
     pub const fn xy_ref(&self) -> Option<(&BaseField<C, N>, &BaseField<C, N>)> {
-        match &self.coords {
-            None => None,
-            Some([x, y]) => Some((x.check_ref(), y.check_ref())),
+        if self.identity {
+            None
+        } else {
+            Some((self.coords[0].check_ref(), self.coords[1].check_ref()))
         }
     }
 
@@ -265,25 +299,19 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     pub const fn xy_unverified(
         &self,
     ) -> Option<(&UnverifiedBaseField<C, N>, &UnverifiedBaseField<C, N>)> {
-        match &self.coords {
-            None => None,
-            Some([x, y]) => Some((x, y)),
-        }
+        if self.identity { None } else { Some((&self.coords[0], &self.coords[1])) }
     }
 
     /// Checks whether `(x, y)` satisfies the curve equation `y² = x³ + ax + b`.
     #[must_use]
     pub fn is_on_curve(&self) -> bool {
-        let Some([x, y]) = &self.coords else {
+        let Some((x, y)) = self.xy_unverified() else {
             return true; // identity is on every curve
         };
 
         let lhs = y * y;
-
         let mut rhs = x * x;
-        if !C::COEFF_A.is_zero() {
-            rhs += &C::COEFF_A;
-        }
+        Self::add_a(&mut rhs);
         rhs *= x;
         rhs += &C::COEFF_B;
 
@@ -300,39 +328,89 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         C::is_in_correct_subgroup(self)
     }
 
-    /// Computes `[2]self`.
-    #[inline]
-    pub fn double(&self) -> Self {
-        let Some(a_xy) = &self.coords else {
-            return Self::IDENTITY;
-        };
-        // y == 0 is impossible for on-curve points when the cofactor is odd (no 2-torsion)
-        if !cofactor::is_odd::<C, _>() {
-            // raw is_zero() handles the honest case (y == 0); a dishonest non-canonical
-            // zero (y > 0 but y == 0 mod p) needs no check since ec_double panics on y == 0
-            if a_xy[1].as_bigint().is_zero() {
-                return Self::IDENTITY;
-            }
-        }
-        Self { coords: Some(C::Ops::double(a_xy)) }
+    /// Raw integer check for y == 0 (2-torsion). Not field equality - only catches the
+    /// canonical zero. y == 0 is impossible for on-curve points when the cofactor is odd (no
+    /// 2-torsion), so this check is skipped at compile time for odd-cofactor curves.
+    #[inline(always)]
+    const fn raw_is_y_zero(&self) -> bool {
+        !cofactor::is_odd::<C, _>() && self.coords[1].as_bigint().is_zero()
     }
 
-    /// Computes `[2]self` in place.
+    /// Adds [`COEFF_A`](CurveConfig::COEFF_A) in place, skipped at compile time when `a == 0`.
+    #[inline(always)]
+    fn add_a(val: &mut UnverifiedBaseField<C, N>) {
+        if !C::COEFF_A.is_zero() {
+            *val += &C::COEFF_A;
+        }
+    }
+
+    /// Computes `[2]src` and writes the result into `self`.
     #[inline]
-    pub fn double_assign(&mut self) {
-        let Some(a_xy) = &mut self.coords else {
+    pub fn double_into(&mut self, src: &Self) {
+        // raw_is_y_zero handles the honest case; a dishonest non-canonical zero
+        // (y > 0 but y == 0 mod p) needs no check since double_into panics on y == 0 mod p anyway
+        if src.identity || src.raw_is_y_zero() {
+            self.identity = true;
             return;
-        };
-        // y == 0 is impossible for on-curve points when the cofactor is odd (no 2-torsion)
-        if !cofactor::is_odd::<C, _>() {
-            // raw is_zero() handles the honest case (y == 0); a dishonest non-canonical
-            // zero (y > 0 but y == 0 mod p) needs no check since ec_double panics on y == 0
-            if a_xy[1].as_bigint().is_zero() {
-                self.coords = None;
-                return;
+        }
+
+        C::Ops::double_into(&src.coords, &mut self.coords);
+        self.identity = false;
+    }
+
+    /// Returns `[2]self`.
+    #[inline]
+    pub fn double(&self) -> Self {
+        // raw_is_y_zero is sound; see double_into for rationale
+        if self.identity || self.raw_is_y_zero() {
+            return Self::IDENTITY;
+        }
+
+        Self { coords: C::Ops::double(&self.coords), identity: false }
+    }
+
+    /// Computes `a + b` and writes the result into `self`.
+    #[inline]
+    pub fn add_into(&mut self, a: &Self, b: &Self) {
+        match (a.identity, b.identity) {
+            (_, true) => *self = *a,
+            (true, _) => *self = *b,
+            // raw_eq handles the honest case; a dishonest non-canonical equality needs no check
+            // since add_into panics on x₁ == x₂ mod p anyway
+            _ if a.coords[0].raw_eq(&b.coords[0]) => {
+                if a.coords[1].check_is_eq(&b.coords[1]) {
+                    self.double_into(a);
+                } else {
+                    self.identity = true;
+                }
+            }
+            _ => {
+                C::Ops::add_into(&a.coords, &b.coords, &mut self.coords);
+                self.identity = false;
             }
         }
-        C::Ops::double_assign(a_xy);
+    }
+
+    /// Returns `self + rhs`. By-value counterpart of [`add_into`](Self::add_into).
+    ///
+    /// Duplicates the match logic from `add_into` rather than delegating - the extra copy
+    /// through `add_into`'s `&mut self` output parameter measurably hurts R0VM performance
+    /// (~50%).
+    #[inline(always)]
+    fn add(&self, rhs: &Self) -> Self {
+        match (self.identity, rhs.identity) {
+            (_, true) => *self,
+            (true, _) => *rhs,
+            // raw_eq is sound; see add_into for rationale
+            _ if self.coords[0].raw_eq(&rhs.coords[0]) => {
+                if self.coords[1].check_is_eq(&rhs.coords[1]) {
+                    self.double()
+                } else {
+                    Self::IDENTITY
+                }
+            }
+            _ => Self { coords: C::Ops::add(&self.coords, &rhs.coords), identity: false },
+        }
     }
 
     /// Maps this point to the prime-order subgroup by computing `[h]self`.
@@ -352,17 +430,26 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// unsigned integer and may be `>= n` (the group order).
     fn scalar_mul(&self, scalar: &(impl BitAccess + ?Sized)) -> Self {
         let n = scalar.bits();
-        if self.is_identity() || n == 0 {
+        if self.identity || n == 0 {
             return Self::IDENTITY;
         }
-        let mut acc = *self;
+
+        // double-buffered: swap references (pointer-sized) instead of values
+        let mut t1 = *self;
+        let mut t2 = Self::IDENTITY;
+        let mut cur = &mut t1;
+        let mut next = &mut t2;
+
         for i in (0..n - 1).rev() {
-            acc.double_assign();
+            next.double_into(cur);
             if scalar.bit(i) {
-                acc.add_assign(self);
+                cur.add_into(next, self);
+            } else {
+                core::mem::swap(&mut cur, &mut next);
             }
         }
-        acc
+
+        *cur
     }
 }
 
@@ -370,9 +457,9 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
 impl<C: CurveConfig<N>, const N: usize> core::fmt::Debug for AffinePoint<C, N> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match &self.coords {
+        match self.xy_unverified() {
             None => write!(f, "AffinePoint(Identity)"),
-            Some([x, y]) => f.debug_struct("AffinePoint").field("x", x).field("y", y).finish(),
+            Some((x, y)) => f.debug_struct("AffinePoint").field("x", x).field("y", y).finish(),
         }
     }
 }
@@ -403,8 +490,8 @@ impl<C: CurveConfig<N>, const N: usize> Neg for &AffinePoint<C, N> {
     #[inline]
     fn neg(self) -> AffinePoint<C, N> {
         let mut result = *self;
-        if let Some(a_xy) = &mut result.coords {
-            a_xy[1].neg_in_place();
+        if !result.identity {
+            result.coords[1].neg_in_place();
         }
         result
     }
@@ -415,38 +502,14 @@ impl<C: CurveConfig<N>, const N: usize> Add for &AffinePoint<C, N> {
 
     #[inline]
     fn add(self, rhs: Self) -> Self::Output {
-        match (&self.coords, &rhs.coords) {
-            (_, None) => *self,
-            (None, _) => *rhs,
-            // same x: doubling (P + P) or cancellation (P + (-P))
-            // sound if non-canonical: ec_add divides by x2 - x1, circuit fails on x2 - x1 == 0
-            (Some(a_xy), Some(b_xy)) if a_xy[0].raw_eq(&b_xy[0]) => {
-                if a_xy[1].check_is_eq(&b_xy[1]) { self.double() } else { AffinePoint::IDENTITY }
-            }
-            (Some(a_xy), Some(b_xy)) => AffinePoint { coords: Some(C::Ops::add(a_xy, b_xy)) },
-        }
+        AffinePoint::add(self, rhs)
     }
 }
 
 impl<C: CurveConfig<N>, const N: usize> AddAssign<&Self> for AffinePoint<C, N> {
     #[inline]
     fn add_assign(&mut self, rhs: &Self) {
-        match (&mut self.coords, &rhs.coords) {
-            (_, None) => {}
-            (None, Some(_)) => *self = *rhs,
-            // same x: doubling (P + P) or cancellation (P + (-P))
-            // sound if non-canonical: ec_add divides by x2 - x1, circuit fails on x2 - x1 == 0
-            (Some(a_xy), Some(b_xy)) if a_xy[0].raw_eq(&b_xy[0]) => {
-                if a_xy[1].check_is_eq(&b_xy[1]) {
-                    self.double_assign();
-                } else {
-                    self.coords = None;
-                }
-            }
-            (Some(a_xy), Some(b_xy)) => {
-                C::Ops::add_assign(a_xy, b_xy);
-            }
-        }
+        *self = &*self + rhs;
     }
 }
 
@@ -462,7 +525,7 @@ impl<C: CurveConfig<N>, const N: usize> Sub for &AffinePoint<C, N> {
 impl<C: CurveConfig<N>, const N: usize> SubAssign<&Self> for AffinePoint<C, N> {
     #[inline]
     fn sub_assign(&mut self, rhs: &Self) {
-        self.add_assign(&(-rhs));
+        *self = &*self - rhs;
     }
 }
 
@@ -602,6 +665,31 @@ mod tests {
 
         // [2]G matches known point
         assert_eq!(&g * &two, pt(2, 5));
+    }
+
+    #[test]
+    fn ys_from_x() {
+        let fq = Fq::from_u32;
+
+        // x = 0: y² = 1, roots are 1 (odd) and 6 (even) -> (even, odd) = (6, 1)
+        let (y_even, y_odd) = Affine::ys_from_x(fq(0)).unwrap();
+        assert!(y_even.as_bigint().is_even());
+        assert!(y_odd.as_bigint().is_odd());
+        assert_eq!((y_even, y_odd), (fq(6), fq(1)));
+
+        // x = 2: roots are 2 (even) and 5 (odd)
+        let (y_even, y_odd) = Affine::ys_from_x(fq(2)).unwrap();
+        assert!(y_even.as_bigint().is_even());
+        assert!(y_odd.as_bigint().is_odd());
+        assert_eq!(&y_even * &y_even, &y_odd * &y_odd);
+
+        // no curve point at x = 1
+        assert!(Affine::ys_from_x(fq(1)).is_none());
+
+        // decompress roundtrip
+        assert_eq!(Affine::decompress(fq(0), false), Some(pt(0, 6)));
+        assert_eq!(Affine::decompress(fq(0), true), Some(pt(0, 1)));
+        assert!(Affine::decompress(fq(1), false).is_none());
     }
 
     #[test]

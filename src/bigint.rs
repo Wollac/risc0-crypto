@@ -1,6 +1,6 @@
 use core::{
     cmp::Ordering,
-    ops::{AddAssign, SubAssign},
+    ops::{Add, AddAssign, Sub, SubAssign},
 };
 
 /// A fixed-size `N * 32`-bit integer stored as `N` little-endian `u32` limbs.
@@ -156,6 +156,18 @@ impl<const N: usize> BigInt<N> {
         bytemuck::cast_slice(&self.0)
     }
 
+    /// Returns `true` if the value is even (least significant bit is clear).
+    #[inline]
+    pub const fn is_even(&self) -> bool {
+        self.0[0] & 1 == 0
+    }
+
+    /// Returns `true` if the value is odd (least significant bit is set).
+    #[inline]
+    pub const fn is_odd(&self) -> bool {
+        !self.is_even()
+    }
+
     /// Returns `true` if the most significant bit is set.
     #[inline]
     pub const fn msb_set(&self) -> bool {
@@ -184,9 +196,7 @@ impl<const N: usize> BigInt<N> {
     }
 
     /// Equality comparison usable in `const` contexts.
-    ///
-    /// Equivalent to `==` but available in `const fn` where `PartialEq` cannot be used.
-    #[inline]
+    #[doc(hidden)]
     pub const fn const_eq(&self, other: &Self) -> bool {
         let mut i = 0;
         while i < N {
@@ -199,9 +209,7 @@ impl<const N: usize> BigInt<N> {
     }
 
     /// Unsigned less-than comparison, usable in `const` contexts.
-    ///
-    /// Equivalent to `<` but available in `const fn` where `PartialOrd` cannot be used.
-    #[inline]
+    #[doc(hidden)]
     pub const fn const_lt(&self, other: &Self) -> bool {
         let mut i = N;
         while i > 0 {
@@ -211,6 +219,38 @@ impl<const N: usize> BigInt<N> {
             }
         }
         false
+    }
+
+    /// Add a `u32`, panicking on overflow. Chainable.
+    #[doc(hidden)]
+    pub const fn const_add_u32(self, rhs: u32) -> Self {
+        let mut out = self;
+        let mut carry = rhs;
+        let mut i = 0;
+        while i < N && carry > 0 {
+            let (v, c) = out.0[i].overflowing_add(carry);
+            out.0[i] = v;
+            carry = c as u32;
+            i += 1;
+        }
+        assert!(carry == 0, "BigInt overflow in const_add_u32");
+        out
+    }
+
+    /// Right-shift by `shift` bits (`shift` must be in 1..32). Chainable.
+    #[doc(hidden)]
+    pub const fn const_shr(self, shift: u32) -> Self {
+        assert!(shift >= 1 && shift < Self::LIMB_BITS as u32);
+        let mut out = [0u32; N];
+        let mut i = 0;
+        while i < N {
+            out[i] = self.0[i] >> shift;
+            if i + 1 < N {
+                out[i] |= self.0[i + 1] << (Self::LIMB_BITS as u32 - shift);
+            }
+            i += 1;
+        }
+        Self(out)
     }
 }
 
@@ -295,8 +335,18 @@ impl<const N: usize> Ord for BigInt<N> {
     }
 }
 
+impl<const N: usize> Add for &BigInt<N> {
+    type Output = BigInt<N>;
+    #[inline]
+    fn add(self, other: Self) -> BigInt<N> {
+        let mut result = *self;
+        result += other;
+        result
+    }
+}
+
 impl<const N: usize> AddAssign<&Self> for BigInt<N> {
-    #[inline(always)]
+    #[inline]
     fn add_assign(&mut self, other: &Self) {
         let mut carry = false;
         for i in 0..N {
@@ -305,8 +355,18 @@ impl<const N: usize> AddAssign<&Self> for BigInt<N> {
     }
 }
 
+impl<const N: usize> Sub for &BigInt<N> {
+    type Output = BigInt<N>;
+    #[inline]
+    fn sub(self, other: Self) -> BigInt<N> {
+        let mut result = *self;
+        result -= other;
+        result
+    }
+}
+
 impl<const N: usize> SubAssign<&Self> for BigInt<N> {
-    #[inline(always)]
+    #[inline]
     fn sub_assign(&mut self, rhs: &Self) {
         let mut borrow = false;
         for i in 0..N {
@@ -417,6 +477,35 @@ mod tests {
             "0xFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFEBAAEDCE6AF48A03BBFD25E8CD0364141",
         );
         assert_eq!(n.bit_len(), 256);
+    }
+
+    #[test]
+    fn const_add_u32() {
+        assert_eq!(BigInt::<8>::ZERO.const_add_u32(1), BigInt::<8>::ONE);
+        // carry across limb boundary
+        assert_eq!(BigInt::<2>::new([u32::MAX, 0]).const_add_u32(1), BigInt::<2>::new([0, 1]),);
+        // chaining
+        assert_eq!(BigInt::<8>::ZERO.const_add_u32(1).const_add_u32(1), BigInt::<8>::from_u32(2));
+    }
+
+    #[test]
+    fn const_shr() {
+        // single-bit shift
+        assert_eq!(BigInt::<8>::from_u32(0b1010).const_shr(1), BigInt::<8>::from_u32(0b101));
+        // multi-bit shift
+        assert_eq!(BigInt::<8>::from_u32(0xff00).const_shr(8), BigInt::<8>::from_u32(0xff));
+        // bits flow across limb boundary
+        assert_eq!(
+            BigInt::<2>::from_hex("0x00000001_80000000").const_shr(1),
+            BigInt::<2>::from_hex("0x00000000_c0000000"),
+        );
+        // chaining: shift by 4 twice == shift by 8
+        assert_eq!(
+            BigInt::<8>::from_u32(0xff00).const_shr(4).const_shr(4),
+            BigInt::<8>::from_u32(0xff),
+        );
+        // chaining with const_eq
+        assert!(BigInt::<8>::from_u32(2).const_shr(1).const_eq(&BigInt::<8>::ONE));
     }
 
     #[test]

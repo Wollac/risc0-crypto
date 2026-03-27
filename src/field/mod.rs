@@ -1,7 +1,7 @@
 mod ops;
 mod unverified;
 
-use crate::{BigInt, LIMBS_256, LIMBS_384};
+use crate::{BigInt, BitAccess, LIMBS_256, LIMBS_384};
 use bytemuck::TransparentWrapper;
 use core::{
     marker::PhantomData,
@@ -16,9 +16,9 @@ type Uf<P, const N: usize> = UnverifiedFp<P, N>;
 
 /// Field arithmetic operations for a prime field.
 ///
-/// All methods are safe - unsafe FFI is contained within the backend implementation. The
-/// `_assign` / in-place variants are the required primitives; non-assign variants have default
-/// implementations that copy and delegate.
+/// All methods are safe - unsafe FFI is contained within the backend implementation. The four
+/// required primitives are `add_assign`, `sub_assign`, `mul_assign`, and `inv`; all other
+/// methods have default implementations that delegate to these.
 pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
     /// Computes `a + b mod p` in place.
     fn add_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
@@ -26,11 +26,21 @@ pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
     fn sub_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
     /// Computes `a * b mod p` in place.
     fn mul_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
-    /// Computes `a = 0 - a mod p` in place.
-    fn neg_in_place(a: &mut Uf<P, N>);
 
     /// Computes `a⁻¹ mod p`. Panics if `a` is zero.
     fn inv(a: &Uf<P, N>) -> Uf<P, N>;
+
+    /// Computes `a = 0 - a mod p` in place.
+    #[inline]
+    fn neg_in_place(a: &mut Uf<P, N>) {
+        *a = Self::sub(Uf::wrap_ref(&BigInt::ZERO), a);
+    }
+
+    /// Computes `a² mod p` in place.
+    #[inline]
+    fn square_in_place(a: &mut Uf<P, N>) {
+        *a = Self::mul(a, a);
+    }
 
     /// Non-assign version of [`add_assign`](Self::add_assign).
     #[inline]
@@ -68,7 +78,7 @@ pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
     #[inline]
     fn reduce(a: &Uf<P, N>) -> Fp<P, N> {
         // a + 0 mod p forces reduction as a side effect
-        Self::add(a, &Uf::from_bigint(BigInt::ZERO)).check()
+        Self::add(a, Uf::wrap_ref(&BigInt::ZERO)).check()
     }
 }
 
@@ -86,6 +96,20 @@ pub trait FieldConfig<const N: usize>: Sized + Send + Sync + 'static {
 
     /// Number of bits in the binary representation of the modulus.
     const MODULUS_BIT_LEN: u32 = Self::MODULUS.bit_len();
+
+    /// `floor(p / 2)` - the boundary between the "low" and "high" halves of the field.
+    #[doc(hidden)]
+    const HALF_MODULUS: BigInt<N> = Self::MODULUS.const_shr(1);
+
+    /// `(p + 1) / 4`, used to compute sqrt when `p % 4 == 3`.
+    ///
+    /// The default implementation computes this from [`MODULUS`](Self::MODULUS) and asserts
+    /// the congruence at compile time. Only evaluated when referenced.
+    #[doc(hidden)]
+    const MODULUS_PLUS_ONE_DIV_FOUR: BigInt<N> = {
+        assert!(Self::MODULUS.0[0] % 4 == 3, "MODULUS_PLUS_ONE_DIV_FOUR requires MODULUS % 4 == 3");
+        Self::MODULUS.const_add_u32(1).const_shr(2)
+    };
 
     /// Additive identity of the field.
     const ZERO: Fp<Self, N> = {
@@ -175,14 +199,12 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
     pub const ONE: Self = P::ONE;
     /// The field modulus (`p`).
     pub const MODULUS: BigInt<N> = P::MODULUS;
-    /// Number of bits in the binary representation of the modulus.
-    pub const MODULUS_BIT_LEN: u32 = P::MODULUS_BIT_LEN;
 
     /// Shift factor for processing byte slices in chunks of `N * 4 - 1` bytes.
-    const CHUNK_BASE: UnverifiedFp<P, N> = {
+    const CHUNK_BASE: BigInt<N> = {
         let mut limbs = [0u32; N];
         limbs[N - 1] = 1 << (u32::BITS - 8);
-        UnverifiedFp::from_bigint(BigInt::new(limbs))
+        BigInt::new(limbs)
     };
 
     /// Creates a field element from a [`BigInt`], returning `None` if the value is `>= p`.
@@ -217,17 +239,36 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
         self.inner.const_eq(&Self::ZERO.inner)
     }
 
+    /// Returns `true` if `self > (p - 1) / 2` (the "high" half of the field).
+    #[inline]
+    pub const fn is_high(&self) -> bool {
+        P::HALF_MODULUS.const_lt(&self.inner)
+    }
+
     /// Computes `self⁻¹ mod p`. Panics if `self` is zero.
     #[inline]
     pub fn inverse(&self) -> Self {
         self.as_unverified().inverse().check()
     }
 
+    /// Computes `self^exp mod p` via square-and-multiply.
+    #[inline]
+    pub fn pow(&self, exp: &(impl BitAccess + ?Sized)) -> Self {
+        self.as_unverified().pow(exp).check()
+    }
+
+    /// Computes a square root mod p. Returns `None` if `self` is not a quadratic residue.
+    /// Only available when `p % 4 == 3` (enforced at compile time).
+    #[inline]
+    pub fn sqrt(&self) -> Option<Self> {
+        self.as_unverified().sqrt().map(UnverifiedFp::check)
+    }
+
     /// Mathematically reduces an arbitrary [`BigInt`] into a valid field element in `[0, p)`.
     #[inline]
     pub fn reduce_from_bigint(mut b: BigInt<N>) -> Self {
         // fast path: already canonical
-        if b.const_lt(&P::MODULUS) {
+        if b < P::MODULUS {
             return unsafe { Self::from_bigint_unchecked(b) };
         }
 
@@ -257,7 +298,7 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
         let mut result = UnverifiedFp::from_bigint(BigInt::from_be_bytes(first));
         for chunk in chunks.rev() {
             let chunk_val = UnverifiedFp::from_bigint(BigInt::from_be_bytes(chunk));
-            result *= &Self::CHUNK_BASE;
+            result *= UnverifiedFp::wrap_ref(&Self::CHUNK_BASE);
             result += &chunk_val;
         }
         // chunks is non-empty (early return above), so the loop reduces and .check() is sound
@@ -280,11 +321,18 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
         let mut result = UnverifiedFp::from_bigint(BigInt::from_le_bytes(first));
         for chunk in chunks.rev() {
             let chunk_val = UnverifiedFp::from_bigint(BigInt::from_le_bytes(chunk));
-            result *= &Self::CHUNK_BASE;
+            result *= UnverifiedFp::wrap_ref(&Self::CHUNK_BASE);
             result += &chunk_val;
         }
         // chunks is non-empty (early return above), so the loop reduces and .check() is sound
         result.check()
+    }
+}
+
+impl<P, const N: usize> From<Fp<P, N>> for BigInt<N> {
+    #[inline]
+    fn from(fp: Fp<P, N>) -> Self {
+        fp.inner
     }
 }
 
@@ -327,34 +375,46 @@ impl<P: FieldConfig<N>, const N: usize> Neg for &Fp<P, N> {
     type Output = Fp<P, N>;
     #[inline]
     fn neg(self) -> Fp<P, N> {
-        self.as_unverified().neg().check()
+        if self.is_zero() {
+            return Fp::ZERO;
+        }
+        let mut result = P::MODULUS;
+        result -= self.as_bigint();
+        // SAFETY: self in (0, p) implies p - self in (0, p)
+        unsafe { Fp::from_bigint_unchecked(result) }
     }
 }
 
-impl<P: FieldConfig<N>, const N: usize> AddAssign<&Self> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> AddAssign<&T> for Fp<P, N> {
     #[inline]
-    fn add_assign(&mut self, rhs: &Self) {
+    fn add_assign(&mut self, rhs: &T) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unverified_mut() += rhs.as_unverified() };
-        assert!(self.inner.const_lt(&P::MODULUS), "unverified field element >= modulus");
+        unsafe { *self.as_unverified_mut() += rhs.as_ref() };
+        if self.inner >= P::MODULUS {
+            unverified::canonical_panic();
+        }
     }
 }
 
-impl<P: FieldConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> SubAssign<&T> for Fp<P, N> {
     #[inline]
-    fn sub_assign(&mut self, rhs: &Self) {
+    fn sub_assign(&mut self, rhs: &T) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unverified_mut() -= rhs.as_unverified() };
-        assert!(self.inner.const_lt(&P::MODULUS), "unverified field element >= modulus");
+        unsafe { *self.as_unverified_mut() -= rhs.as_ref() };
+        if self.inner >= P::MODULUS {
+            unverified::canonical_panic();
+        }
     }
 }
 
-impl<P: FieldConfig<N>, const N: usize> MulAssign<&Self> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> MulAssign<&T> for Fp<P, N> {
     #[inline]
-    fn mul_assign(&mut self, rhs: &Self) {
+    fn mul_assign(&mut self, rhs: &T) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unverified_mut() *= rhs.as_unverified() };
-        assert!(self.inner.const_lt(&P::MODULUS), "unverified field element >= modulus");
+        unsafe { *self.as_unverified_mut() *= rhs.as_ref() };
+        if self.inner >= P::MODULUS {
+            unverified::canonical_panic();
+        }
     }
 }
 
@@ -451,5 +511,28 @@ mod tests {
             F::from_le_bytes_mod_order(&[0x01, 0x02]),
             F::from_be_bytes_mod_order(&[0x02, 0x01]),
         );
+    }
+
+    #[test]
+    fn pow_and_sqrt() {
+        let two = F::from_u32(2);
+        // pow: 2³ = 8 = 1 mod 7
+        assert_eq!(two.pow(&BigInt::<1>::from_u32(3)), F::ONE);
+        // Fermat's little theorem: a^(p-1) = 1
+        assert_eq!(two.pow(&BigInt::<1>::from_u32(6)), F::ONE);
+        // a^0 = 1
+        assert_eq!(two.pow(&BigInt::<1>::ZERO), F::ONE);
+
+        // sqrt: quadratic residues in F_7 are {0, 1, 2, 4}
+        // sqrt(0) = 0, sqrt(1) = 1 or 6, sqrt(2) = 3 or 4, sqrt(4) = 2 or 5
+        assert_eq!(F::ZERO.sqrt(), Some(F::ZERO));
+        for a in [1u32, 2, 4] {
+            let root = F::from_u32(a).sqrt().unwrap();
+            assert_eq!(&root * &root, F::from_u32(a));
+        }
+        // non-residues: {3, 5, 6}
+        for a in [3u32, 5, 6] {
+            assert!(F::from_u32(a).sqrt().is_none());
+        }
     }
 }
