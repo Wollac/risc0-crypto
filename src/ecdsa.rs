@@ -347,8 +347,8 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
         // double_scalar_mul computes [u1]R + [u2]G, so we negate u2 for the subtraction
         let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
         let r_inv = self.sig.r.as_unverified().inverse();
-        let u1 = &r_inv * &self.sig.s;  // r⁻¹s (scalar for R)
-        let mut u2 = &r_inv * &z;       // r⁻¹z (scalar for G, before negation)
+        let u1 = &r_inv * &self.sig.s; // r⁻¹s (scalar for R)
+        let mut u2 = &r_inv * &z; // r⁻¹z (scalar for G, before negation)
         u2.neg_in_place();
 
         let g_pt = &AffinePoint::GENERATOR;
