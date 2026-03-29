@@ -613,8 +613,9 @@ mod wycheproof {
     use ::wycheproof::ecdsa::{TestName, TestSet};
     use sha2::Digest;
 
-    /// Parses a P1363 signature (r || s), returning `None` for wrong length,
-    /// out-of-range, or zero components.
+    /// parses a P1363 signature (r || s), returning `None` for:
+    /// - wrong length
+    /// - out-of-range or zero components
     fn parse_sig<C: CurveConfig<N>, const N: usize>(bytes: &[u8]) -> Option<Signature<C, N>> {
         if bytes.len() != 2 * N * 4 {
             return None;
@@ -627,21 +628,18 @@ mod wycheproof {
 
     fn run_verify_tests<C: CurveConfig<N>, D: Digest, const N: usize>(name: TestName) {
         let test_set = TestSet::load(name).unwrap();
-        let field_len = N * 4;
 
         for group in &test_set.test_groups {
             let pk_bytes: &[u8] = &group.key.key;
 
             assert_eq!(pk_bytes[0], 0x04, "expected uncompressed point");
-            let x = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1..1 + field_len])).unwrap();
-            let y = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1 + field_len..])).unwrap();
+            let x = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1..1 + N * 4])).unwrap();
+            let y = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1 + N * 4..])).unwrap();
             let pubkey = AffinePoint::<C, N>::new_in_subgroup(x, y).unwrap();
 
             for tc in &group.tests {
-                let hash = D::digest(&*tc.msg);
-
-                let verified =
-                    parse_sig::<C, N>(&tc.sig).is_some_and(|sig| sig.verify(&pubkey, &hash));
+                let verified = parse_sig::<C, N>(&tc.sig)
+                    .is_some_and(|sig| sig.verify(&pubkey, &D::digest(&*tc.msg)));
 
                 let expected = !tc.result.must_fail();
                 assert_eq!(verified, expected, "tcId {}: {}", tc.tc_id, tc.comment);
