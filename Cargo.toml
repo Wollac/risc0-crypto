@@ -13,6 +13,8 @@ risc0-bigint2 = "1.4.13"
 
 [dev-dependencies]
 rstest = "0.26"
+sha2 = { version = "0.10", default-features = false }
+wycheproof = { version = "0.6", default-features = false, features = ["ecdsa"] }
 
 [build-dependencies]
 cargo_metadata = "0.23.1"
