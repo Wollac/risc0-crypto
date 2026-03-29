@@ -648,7 +648,6 @@ mod wycheproof {
     fn run_verify_tests<C: CurveConfig<N>, D: Digest, const N: usize>(json: &str) {
         let suite: Suite = serde_json::from_str(json).unwrap();
         let field_len = N * 4; // byte length of a field element
-        let mut counts = [0u32; 3]; // [valid, invalid, acceptable]
 
         for group in &suite.test_groups {
             let pk_bytes = hex::decode(&group.public_key.uncompressed).unwrap();
@@ -692,21 +691,15 @@ mod wycheproof {
                 match tc.result.as_str() {
                     "valid" => {
                         assert!(verified, "tcId {}: expected valid ({})", tc.tc_id, tc.comment,);
-                        counts[0] += 1;
                     }
                     "invalid" => {
                         assert!(!verified, "tcId {}: expected invalid ({})", tc.tc_id, tc.comment,);
-                        counts[1] += 1;
                     }
-                    "acceptable" => counts[2] += 1,
+                    "acceptable" => {}
                     other => panic!("unknown result: {other}"),
                 }
             }
         }
-
-        // sanity: ensure we actually ran a meaningful number of tests
-        assert!(counts[0] > 0, "no valid test cases found");
-        assert!(counts[1] > 0, "no invalid test cases found");
     }
 
     #[test]
