@@ -623,6 +623,7 @@ mod wycheproof {
 
     /// Parses an uncompressed EC point (04 || x || y). Returns `None` for
     /// compressed, invalid, or wrong-length encodings.
+    // TODO: handle compressed points (02/03 prefix) once point decompression lands
     fn parse_point<C: CurveConfig<N>, const N: usize>(bytes: &[u8]) -> Option<AffinePoint<C, N>> {
         if bytes.first() != Some(&0x04) || bytes.len() != 1 + 2 * N * 4 {
             return None;
