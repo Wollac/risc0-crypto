@@ -633,6 +633,14 @@ mod wycheproof {
         uncompressed: String,
     }
 
+    #[derive(Deserialize, PartialEq)]
+    #[serde(rename_all = "lowercase")]
+    enum TestResult {
+        Valid,
+        Invalid,
+        Acceptable,
+    }
+
     #[derive(Deserialize)]
     #[serde(rename_all = "camelCase")]
     struct TestCase {
@@ -640,14 +648,14 @@ mod wycheproof {
         comment: String,
         msg: String,
         sig: String,
-        result: String,
+        result: TestResult,
     }
 
     /// Runs Wycheproof ECDSA P1363 verification tests for curve `C` with
     /// digest `D`.
     fn run_verify_tests<C: CurveConfig<N>, D: Digest, const N: usize>(json: &str) {
         let suite: Suite = serde_json::from_str(json).unwrap();
-        let field_len = N * 4; // byte length of a field element
+        let field_len = N * 4;
 
         for group in &suite.test_groups {
             let pk_bytes = hex::decode(&group.public_key.uncompressed).unwrap();
@@ -688,15 +696,14 @@ mod wycheproof {
                     sig.verify(pk, &hash)
                 });
 
-                match tc.result.as_str() {
-                    "valid" => {
+                match tc.result {
+                    TestResult::Valid => {
                         assert!(verified, "tcId {}: expected valid ({})", tc.tc_id, tc.comment,);
                     }
-                    "invalid" => {
+                    TestResult::Invalid => {
                         assert!(!verified, "tcId {}: expected invalid ({})", tc.tc_id, tc.comment,);
                     }
-                    "acceptable" => {}
-                    other => panic!("unknown result: {other}"),
+                    TestResult::Acceptable => {}
                 }
             }
         }
