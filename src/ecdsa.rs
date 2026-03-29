@@ -666,9 +666,7 @@ mod wycheproof {
 
             for tc in &group.tests {
                 let verified = (|| {
-                    let Ok(sig_bytes) = hex::decode(&tc.sig) else {
-                        return false;
-                    };
+                    let sig_bytes = hex::decode(&tc.sig).unwrap();
                     if sig_bytes.len() != 2 * field_len {
                         return false;
                     }
