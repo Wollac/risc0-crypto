@@ -638,7 +638,6 @@ mod wycheproof {
     enum TestResult {
         Valid,
         Invalid,
-        Acceptable,
     }
 
     #[derive(Deserialize)]
@@ -696,15 +695,8 @@ mod wycheproof {
                     sig.verify(pk, &hash)
                 });
 
-                match tc.result {
-                    TestResult::Valid => {
-                        assert!(verified, "tcId {}: expected valid ({})", tc.tc_id, tc.comment,);
-                    }
-                    TestResult::Invalid => {
-                        assert!(!verified, "tcId {}: expected invalid ({})", tc.tc_id, tc.comment,);
-                    }
-                    TestResult::Acceptable => {}
-                }
+                let expected = tc.result == TestResult::Valid;
+                assert_eq!(verified, expected, "tcId {}: {}", tc.tc_id, tc.comment);
             }
         }
     }
