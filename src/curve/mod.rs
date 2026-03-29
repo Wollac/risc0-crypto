@@ -640,10 +640,13 @@ mod wycheproof {
             for tc in &group.tests {
                 let result = (|| {
                     let point = parse_point::<C, N>(&tc.public_key)?;
-                    if tc.private_key.len() > N * 4 {
+                    // strip leading zero bytes (big-endian unsigned padding)
+                    let key_start = tc.private_key.iter().position(|&b| b != 0).unwrap_or(0);
+                    let key = &tc.private_key[key_start..];
+                    if key.len() > N * 4 {
                         return None;
                     }
-                    let scalar = Fp::from_bigint(BigInt::from_be_bytes(&tc.private_key))?;
+                    let scalar = Fp::from_bigint(BigInt::from_be_bytes(key))?;
                     let (rx, _) = (&point * &scalar).xy()?;
                     Some(rx.to_bigint())
                 })();
