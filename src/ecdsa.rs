@@ -608,47 +608,10 @@ mod tests {
 
 #[cfg(test)]
 mod wycheproof {
-    extern crate alloc;
     use super::*;
     use crate::BigInt;
-    use alloc::{string::String, vec::Vec};
-    use serde::Deserialize;
+    use ::wycheproof::ecdsa::{TestName, TestSet};
     use sha2::Digest;
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Suite {
-        test_groups: Vec<Group>,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct Group {
-        public_key: PublicKey,
-        tests: Vec<TestCase>,
-    }
-
-    #[derive(Deserialize)]
-    struct PublicKey {
-        uncompressed: String,
-    }
-
-    #[derive(Deserialize, PartialEq)]
-    #[serde(rename_all = "lowercase")]
-    enum TestResult {
-        Valid,
-        Invalid,
-    }
-
-    #[derive(Deserialize)]
-    #[serde(rename_all = "camelCase")]
-    struct TestCase {
-        tc_id: u64,
-        comment: String,
-        msg: String,
-        sig: String,
-        result: TestResult,
-    }
 
     /// Parses a P1363 signature (r || s), returning `None` for wrong length,
     /// out-of-range, or zero components.
@@ -662,12 +625,12 @@ mod wycheproof {
         Signature::new(r, s)
     }
 
-    fn run_verify_tests<C: CurveConfig<N>, D: Digest, const N: usize>(json: &str) {
-        let suite: Suite = serde_json::from_str(json).unwrap();
+    fn run_verify_tests<C: CurveConfig<N>, D: Digest, const N: usize>(name: TestName) {
+        let test_set = TestSet::load(name).unwrap();
         let field_len = N * 4;
 
-        for group in &suite.test_groups {
-            let pk_bytes = hex::decode(&group.public_key.uncompressed).unwrap();
+        for group in &test_set.test_groups {
+            let pk_bytes: &[u8] = &group.key.key;
 
             assert_eq!(pk_bytes[0], 0x04, "expected uncompressed point");
             let x = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1..1 + field_len])).unwrap();
@@ -675,14 +638,12 @@ mod wycheproof {
             let pubkey = AffinePoint::<C, N>::new_in_subgroup(x, y).unwrap();
 
             for tc in &group.tests {
-                let sig_bytes = hex::decode(&tc.sig).unwrap();
-                let msg = hex::decode(&tc.msg).unwrap();
-                let hash = D::digest(&msg);
+                let hash = D::digest(&*tc.msg);
 
                 let verified =
-                    parse_sig::<C, N>(&sig_bytes).is_some_and(|sig| sig.verify(&pubkey, &hash));
+                    parse_sig::<C, N>(&tc.sig).is_some_and(|sig| sig.verify(&pubkey, &hash));
 
-                let expected = tc.result == TestResult::Valid;
+                let expected = !tc.result.must_fail();
                 assert_eq!(verified, expected, "tcId {}: {}", tc.tc_id, tc.comment);
             }
         }
@@ -690,31 +651,22 @@ mod wycheproof {
 
     #[test]
     fn secp256k1_sha256() {
-        run_verify_tests::<crate::curves::secp256k1::Config, sha2::Sha256, 8>(include_str!(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/testdata/wycheproof/ecdsa_secp256k1_sha256_p1363_test.json",
-            )
-        ));
+        run_verify_tests::<crate::curves::secp256k1::Config, sha2::Sha256, 8>(
+            TestName::EcdsaSecp256k1Sha256P1363,
+        );
     }
 
     #[test]
     fn secp256r1_sha256() {
-        run_verify_tests::<crate::curves::secp256r1::Config, sha2::Sha256, 8>(include_str!(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/testdata/wycheproof/ecdsa_secp256r1_sha256_p1363_test.json",
-            )
-        ));
+        run_verify_tests::<crate::curves::secp256r1::Config, sha2::Sha256, 8>(
+            TestName::EcdsaSecp256r1Sha256P1363,
+        );
     }
 
     #[test]
     fn secp384r1_sha384() {
-        run_verify_tests::<crate::curves::secp384r1::Config, sha2::Sha384, 12>(include_str!(
-            concat!(
-                env!("CARGO_MANIFEST_DIR"),
-                "/testdata/wycheproof/ecdsa_secp384r1_sha384_p1363_test.json",
-            )
-        ));
+        run_verify_tests::<crate::curves::secp384r1::Config, sha2::Sha384, 12>(
+            TestName::EcdsaSecp384r1Sha384P1363,
+        );
     }
 }
