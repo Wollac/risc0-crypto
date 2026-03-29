@@ -659,23 +659,13 @@ mod wycheproof {
         for group in &suite.test_groups {
             let pk_bytes = hex::decode(&group.public_key.uncompressed).unwrap();
 
-            // parse uncompressed point (04 || x || y); skip group on failure
-            let pubkey = (|| {
-                if pk_bytes.first() != Some(&0x04) {
-                    return None;
-                }
-                if pk_bytes.len() != 1 + 2 * field_len {
-                    return None;
-                }
-                let x_bytes = &pk_bytes[1..1 + field_len];
-                let y_bytes = &pk_bytes[1 + field_len..];
-                let x = Fp::from_bigint(BigInt::from_be_bytes(x_bytes))?;
-                let y = Fp::from_bigint(BigInt::from_be_bytes(y_bytes))?;
-                AffinePoint::<C, N>::new(x, y)
-            })();
+            assert_eq!(pk_bytes[0], 0x04, "expected uncompressed point");
+            let x = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1..1 + field_len])).unwrap();
+            let y = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1 + field_len..])).unwrap();
+            let pubkey = AffinePoint::<C, N>::new(x, y).unwrap();
 
             for tc in &group.tests {
-                let verified = pubkey.as_ref().is_some_and(|pk| {
+                let verified = (|| {
                     let Ok(sig_bytes) = hex::decode(&tc.sig) else {
                         return false;
                     };
@@ -692,8 +682,8 @@ mod wycheproof {
 
                     let msg = hex::decode(&tc.msg).unwrap();
                     let hash = D::digest(&msg);
-                    sig.verify(pk, &hash)
-                });
+                    sig.verify(&pubkey, &hash)
+                })();
 
                 let expected = tc.result == TestResult::Valid;
                 assert_eq!(verified, expected, "tcId {}: {}", tc.tc_id, tc.comment);
