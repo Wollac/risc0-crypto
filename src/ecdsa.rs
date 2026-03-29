@@ -613,9 +613,7 @@ mod wycheproof {
     use ::wycheproof::ecdsa::{TestName, TestSet};
     use sha2::Digest;
 
-    /// parses a P1363 signature (r || s), returning `None` for:
-    /// - wrong length
-    /// - out-of-range or zero components
+    /// Parses a P1363 signature (r || s). Returns `None` if malformed.
     fn parse_sig<C: CurveConfig<N>, const N: usize>(bytes: &[u8]) -> Option<Signature<C, N>> {
         if bytes.len() != 2 * N * 4 {
             return None;
