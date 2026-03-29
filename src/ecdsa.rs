@@ -609,8 +609,8 @@ mod tests {
 #[cfg(test)]
 mod wycheproof {
     extern crate alloc;
-    use super::Signature;
-    use crate::{AffinePoint, BigInt, CurveConfig, Fp};
+    use super::*;
+    use crate::BigInt;
     use alloc::{string::String, vec::Vec};
     use serde::Deserialize;
     use sha2::Digest;
