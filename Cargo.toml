@@ -12,7 +12,11 @@ include_bytes_aligned = "0.2"
 risc0-bigint2 = "1.4.13"
 
 [dev-dependencies]
+hex = { version = "0.4", default-features = false, features = ["alloc"] }
 rstest = "0.26"
+serde = { version = "1", default-features = false, features = ["derive", "alloc"] }
+serde_json = { version = "1", default-features = false, features = ["alloc"] }
+sha2 = { version = "0.10", default-features = false }
 
 [build-dependencies]
 cargo_metadata = "0.23.1"

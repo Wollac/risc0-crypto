@@ -605,3 +605,137 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod wycheproof {
+    extern crate alloc;
+    use super::Signature;
+    use crate::{AffinePoint, BigInt, CurveConfig, Fp};
+    use alloc::{string::String, vec::Vec};
+    use serde::Deserialize;
+    use sha2::Digest;
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Suite {
+        test_groups: Vec<Group>,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct Group {
+        public_key: PublicKey,
+        tests: Vec<TestCase>,
+    }
+
+    #[derive(Deserialize)]
+    struct PublicKey {
+        uncompressed: String,
+    }
+
+    #[derive(Deserialize)]
+    #[serde(rename_all = "camelCase")]
+    struct TestCase {
+        tc_id: u64,
+        comment: String,
+        msg: String,
+        sig: String,
+        result: String,
+    }
+
+    /// Runs Wycheproof ECDSA P1363 verification tests for curve `C` with
+    /// digest `D`.
+    fn run_verify_tests<C: CurveConfig<N>, D: Digest, const N: usize>(json: &str) {
+        let suite: Suite = serde_json::from_str(json).unwrap();
+        let field_len = N * 4; // byte length of a field element
+        let mut counts = [0u32; 3]; // [valid, invalid, acceptable]
+
+        for group in &suite.test_groups {
+            let pk_bytes = hex::decode(&group.public_key.uncompressed).unwrap();
+
+            // parse uncompressed point (04 || x || y); skip group on failure
+            let pubkey = (|| {
+                if pk_bytes.first() != Some(&0x04) {
+                    return None;
+                }
+                if pk_bytes.len() != 1 + 2 * field_len {
+                    return None;
+                }
+                let x_bytes = &pk_bytes[1..1 + field_len];
+                let y_bytes = &pk_bytes[1 + field_len..];
+                let x = Fp::from_bigint(BigInt::from_be_bytes(x_bytes))?;
+                let y = Fp::from_bigint(BigInt::from_be_bytes(y_bytes))?;
+                AffinePoint::<C, N>::new(x, y)
+            })();
+
+            for tc in &group.tests {
+                let verified = pubkey.as_ref().is_some_and(|pk| {
+                    let Ok(sig_bytes) = hex::decode(&tc.sig) else {
+                        return false;
+                    };
+                    if sig_bytes.len() != 2 * field_len {
+                        return false;
+                    }
+                    let r_bytes = &sig_bytes[..field_len];
+                    let s_bytes = &sig_bytes[field_len..];
+                    let r = Fp::from_bigint(BigInt::from_be_bytes(r_bytes));
+                    let s = Fp::from_bigint(BigInt::from_be_bytes(s_bytes));
+                    let Some(sig) = r.zip(s).and_then(|(r, s)| Signature::<C, N>::new(r, s)) else {
+                        return false;
+                    };
+
+                    let msg = hex::decode(&tc.msg).unwrap();
+                    let hash = D::digest(&msg);
+                    sig.verify(pk, &hash)
+                });
+
+                match tc.result.as_str() {
+                    "valid" => {
+                        assert!(verified, "tcId {}: expected valid ({})", tc.tc_id, tc.comment,);
+                        counts[0] += 1;
+                    }
+                    "invalid" => {
+                        assert!(!verified, "tcId {}: expected invalid ({})", tc.tc_id, tc.comment,);
+                        counts[1] += 1;
+                    }
+                    "acceptable" => counts[2] += 1,
+                    other => panic!("unknown result: {other}"),
+                }
+            }
+        }
+
+        // sanity: ensure we actually ran a meaningful number of tests
+        assert!(counts[0] > 0, "no valid test cases found");
+        assert!(counts[1] > 0, "no invalid test cases found");
+    }
+
+    #[test]
+    fn secp256k1_sha256() {
+        run_verify_tests::<crate::curves::secp256k1::Config, sha2::Sha256, 8>(include_str!(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/testdata/wycheproof/ecdsa_secp256k1_sha256_p1363_test.json",
+            )
+        ));
+    }
+
+    #[test]
+    fn secp256r1_sha256() {
+        run_verify_tests::<crate::curves::secp256r1::Config, sha2::Sha256, 8>(include_str!(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/testdata/wycheproof/ecdsa_secp256r1_sha256_p1363_test.json",
+            )
+        ));
+    }
+
+    #[test]
+    fn secp384r1_sha384() {
+        run_verify_tests::<crate::curves::secp384r1::Config, sha2::Sha384, 12>(include_str!(
+            concat!(
+                env!("CARGO_MANIFEST_DIR"),
+                "/testdata/wycheproof/ecdsa_secp384r1_sha384_p1363_test.json",
+            )
+        ));
+    }
+}
