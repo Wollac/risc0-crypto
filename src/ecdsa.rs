@@ -672,7 +672,7 @@ mod wycheproof {
             assert_eq!(pk_bytes[0], 0x04, "expected uncompressed point");
             let x = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1..1 + field_len])).unwrap();
             let y = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1 + field_len..])).unwrap();
-            let pubkey = AffinePoint::<C, N>::new(x, y).unwrap();
+            let pubkey = AffinePoint::<C, N>::new_in_subgroup(x, y).unwrap();
 
             for tc in &group.tests {
                 let sig_bytes = hex::decode(&tc.sig).unwrap();
