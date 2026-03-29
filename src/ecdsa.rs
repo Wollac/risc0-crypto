@@ -134,7 +134,12 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
         let u2 = &s_inv * &self.r;
 
         // R' = [u1]G + [u2]Q
-        &(&AffinePoint::GENERATOR * &u1) + &(pubkey * &u2)
+        AffinePoint::double_scalar_mul(
+            u1.check_ref(),
+            &AffinePoint::GENERATOR,
+            u2.check_ref(),
+            pubkey,
+        )
     }
 
     /// Verifies this signature against a message hash and public key `pubkey`.
@@ -320,30 +325,34 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
     /// valid ECDSA signature on `hash` under `Q` with recovery ID `v`. Returns `None` if the
     /// recovery ID is inconsistent (e.g., no curve point at the recovered x-coordinate).
     pub fn recover(&self, hash: &[u8]) -> Option<AffinePoint<C, N>> {
-        // reconstruct R.x in the base field
+        // reconstruct R.x in the base field. r = R.x mod n, so we may need to undo the reduction
+        // depending on the recovery ID
         let rx = if self.recovery_id.is_x_reduced() {
-            // original R.x was >= n, so R.x = r + n; reject if r + n overflows or >= p
+            // R.x >= n before reduction, so R.x = r + n
             let rx = self.sig.r.as_bigint() + &C::ScalarFieldConfig::MODULUS;
             if &rx < self.sig.r.as_bigint() {
                 return None; // r + n overflowed N limbs
             }
-            BaseField::<C, N>::from_bigint(rx)?
+            BaseField::<C, N>::from_bigint(rx)? // None if r + n >= p
         } else if C::ScalarFieldConfig::MODULUS.const_lt(&C::BaseFieldConfig::MODULUS) {
-            // SAFETY: n < p, so r < n < p is a valid base field element
+            // SAFETY: n < p, so r < n < p is already a valid base field element
             unsafe { BaseField::<C, N>::from_bigint_unchecked(self.sig.r.into()) }
         } else {
-            // n >= p: r < p for legitimate signatures
+            // n >= p: None if r >= p
             BaseField::<C, N>::from_bigint(self.sig.r.into())?
         };
-        let r_pt = AffinePoint::<C, N>::decompress(rx, self.recovery_id.is_y_odd())?;
+        let r_pt = AffinePoint::decompress(rx, self.recovery_id.is_y_odd())?;
 
-        // Q = [r⁻¹]([s]R - [z]G)
+        // Q = [r⁻¹]([s]R - [z]G) = [r⁻¹s]R + [-(r⁻¹z)]G
+        // double_scalar_mul computes [u1]R + [u2]G, so we negate u2 for the subtraction
         let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
         let r_inv = self.sig.r.as_unverified().inverse();
-        let u1 = &r_inv * &self.sig.s; // [s * r⁻¹] for R
-        let u2 = &r_inv * &z; // [z * r⁻¹] for G
+        let u1 = &r_inv * &self.sig.s;  // r⁻¹s (scalar for R)
+        let mut u2 = &r_inv * &z;       // r⁻¹z (scalar for G, before negation)
+        u2.neg_in_place();
 
-        Some(&(&r_pt * &u1) - &(&AffinePoint::GENERATOR * &u2))
+        let g_pt = &AffinePoint::GENERATOR;
+        Some(AffinePoint::double_scalar_mul(u1.check_ref(), &r_pt, u2.check_ref(), g_pt))
     }
 
     /// Normalizes into "low S" form, adjusting the recovery ID accordingly. Returns `None` if

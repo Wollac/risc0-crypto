@@ -440,12 +440,57 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         let mut cur = &mut t1;
         let mut next = &mut t2;
 
+        // bit n-1 is always 1 (n = bits()), so start from n-2
         for i in (0..n - 1).rev() {
             next.double_into(cur);
             if scalar.bit(i) {
                 cur.add_into(next, self);
             } else {
                 core::mem::swap(&mut cur, &mut next);
+            }
+        }
+
+        *cur
+    }
+
+    /// Computes `[a]P + [b]Q` via Shamir's trick (interleaved double-and-add).
+    ///
+    /// Saves ~n doublings compared to two independent scalar multiplications. Both scalars are
+    /// interpreted as unsigned integers and may be `>= n` (the group order).
+    #[inline]
+    pub fn double_scalar_mul(
+        a: &ScalarField<C, N>,
+        p: &Self,
+        b: &ScalarField<C, N>,
+        q: &Self,
+    ) -> Self {
+        Self::double_scalar_mul_inner(a.as_bigint(), p, b.as_bigint(), q)
+    }
+
+    /// Inner implementation using [`BitAccess`] scalars.
+    fn double_scalar_mul_inner(
+        a: &(impl BitAccess + ?Sized),
+        p: &Self,
+        b: &(impl BitAccess + ?Sized),
+        q: &Self,
+    ) -> Self {
+        let n = a.bits().max(b.bits());
+
+        // precompute P + Q for the (1, 1) bit-pair case
+        let pq = p.add(q);
+
+        let mut t1 = Self::IDENTITY;
+        let mut t2 = Self::IDENTITY;
+        let mut cur = &mut t1;
+        let mut next = &mut t2;
+
+        for i in (0..n).rev() {
+            next.double_into(cur);
+            match (a.bit(i), b.bit(i)) {
+                (true, true) => cur.add_into(next, &pq),
+                (true, false) => cur.add_into(next, p),
+                (false, true) => cur.add_into(next, q),
+                (false, false) => core::mem::swap(&mut cur, &mut next),
             }
         }
 
@@ -665,6 +710,54 @@ mod tests {
 
         // [2]G matches known point
         assert_eq!(&g * &two, pt(2, 5));
+    }
+
+    #[test]
+    fn double_scalar_mul_exhaustive() {
+        let g = Affine::GENERATOR;
+        let two_g = g.double();
+
+        // exhaustive: all 25 combinations of (a, b) in {0..4} with P=G, Q=2G
+        // [a]G + [b](2G) == [a + 2b mod 5]G
+        let group = [Affine::IDENTITY, g, two_g, pt(2, 2), pt(0, 6)];
+        for a in 0u32..5 {
+            for b in 0u32..5 {
+                let sa = Fr::from_u32(a);
+                let sb = Fr::from_u32(b);
+                let expected = group[((a + 2 * b) % 5) as usize];
+                assert_eq!(
+                    Affine::double_scalar_mul(&sa, &g, &sb, &two_g),
+                    expected,
+                    "failed for a={a}, b={b}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn double_scalar_mul_edge_cases() {
+        let g = Affine::GENERATOR;
+        let o = Affine::IDENTITY;
+
+        // both scalars zero
+        assert!(Affine::double_scalar_mul(&Fr::ZERO, &g, &Fr::ZERO, &g).is_identity());
+
+        // identity points
+        assert_eq!(
+            Affine::double_scalar_mul(&Fr::from_u32(2), &o, &Fr::from_u32(3), &g),
+            pt(2, 2), // [3]G
+        );
+        assert!(Affine::double_scalar_mul(&Fr::ONE, &o, &Fr::ONE, &o).is_identity());
+
+        // P == -Q: [1]G + [1](-G) = O
+        let neg_g = -&g;
+        assert!(Affine::double_scalar_mul(&Fr::ONE, &g, &Fr::ONE, &neg_g).is_identity());
+
+        // equivalence with separate scalar muls
+        let a = Fr::from_u32(3);
+        let b = Fr::from_u32(4);
+        let q = pt(2, 5); // 2G
+        assert_eq!(Affine::double_scalar_mul(&a, &g, &b, &q), &(&g * &a) + &(&q * &b),);
     }
 
     #[test]
