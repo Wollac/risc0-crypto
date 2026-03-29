@@ -650,8 +650,18 @@ mod wycheproof {
         result: TestResult,
     }
 
-    /// Runs Wycheproof ECDSA P1363 verification tests for curve `C` with
-    /// digest `D`.
+    /// Parses a P1363 signature (r || s), returning `None` for wrong length,
+    /// out-of-range, or zero components.
+    fn parse_sig<C: CurveConfig<N>, const N: usize>(bytes: &[u8]) -> Option<Signature<C, N>> {
+        if bytes.len() != 2 * N * 4 {
+            return None;
+        }
+        let (r, s) = bytes.split_at(N * 4);
+        let r = Fp::from_bigint(BigInt::from_be_bytes(r))?;
+        let s = Fp::from_bigint(BigInt::from_be_bytes(s))?;
+        Signature::new(r, s)
+    }
+
     fn run_verify_tests<C: CurveConfig<N>, D: Digest, const N: usize>(json: &str) {
         let suite: Suite = serde_json::from_str(json).unwrap();
         let field_len = N * 4;
@@ -665,23 +675,12 @@ mod wycheproof {
             let pubkey = AffinePoint::<C, N>::new(x, y).unwrap();
 
             for tc in &group.tests {
-                let verified = (|| {
-                    let sig_bytes = hex::decode(&tc.sig).unwrap();
-                    if sig_bytes.len() != 2 * field_len {
-                        return false;
-                    }
-                    let r_bytes = &sig_bytes[..field_len];
-                    let s_bytes = &sig_bytes[field_len..];
-                    let r = Fp::from_bigint(BigInt::from_be_bytes(r_bytes));
-                    let s = Fp::from_bigint(BigInt::from_be_bytes(s_bytes));
-                    let Some(sig) = r.zip(s).and_then(|(r, s)| Signature::<C, N>::new(r, s)) else {
-                        return false;
-                    };
+                let sig_bytes = hex::decode(&tc.sig).unwrap();
+                let msg = hex::decode(&tc.msg).unwrap();
+                let hash = D::digest(&msg);
 
-                    let msg = hex::decode(&tc.msg).unwrap();
-                    let hash = D::digest(&msg);
-                    sig.verify(&pubkey, &hash)
-                })();
+                let verified =
+                    parse_sig::<C, N>(&sig_bytes).is_some_and(|sig| sig.verify(&pubkey, &hash));
 
                 let expected = tc.result == TestResult::Valid;
                 assert_eq!(verified, expected, "tcId {}: {}", tc.tc_id, tc.comment);
