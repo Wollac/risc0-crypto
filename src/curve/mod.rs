@@ -792,3 +792,72 @@ mod tests {
         assert_eq!(pt(2, 5).clear_cofactor(), pt(2, 5));
     }
 }
+
+#[cfg(test)]
+mod wycheproof {
+    use super::*;
+    use crate::BigInt;
+    use ::wycheproof::{
+        TestResult,
+        ecdh::{TestName, TestSet},
+    };
+
+    /// Parses an uncompressed EC point (04 || x || y). Returns `None` for
+    /// non-uncompressed, wrong-length, or off-curve encodings.
+    // TODO: handle compressed points (02/03 prefix) once point decompression lands
+    fn parse_point<C: CurveConfig<N>, const N: usize>(bytes: &[u8]) -> Option<AffinePoint<C, N>> {
+        if bytes.first() != Some(&0x04) || bytes.len() != 1 + 2 * N * 4 {
+            return None;
+        }
+        let x = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1..1 + N * 4]))?;
+        let y = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1 + N * 4..]))?;
+        AffinePoint::<C, N>::new(x, y)
+    }
+
+    /// Runs Wycheproof ECDH EcPoint tests as scalar multiplication tests.
+    fn run_scalar_mul_tests<C: CurveConfig<N>, const N: usize>(name: TestName) {
+        let test_set = TestSet::load(name).unwrap();
+
+        for group in &test_set.test_groups {
+            for tc in &group.tests {
+                let result = (|| {
+                    let point = parse_point::<C, N>(&tc.public_key)?;
+                    let key_start = tc.private_key.iter().position(|&b| b != 0).unwrap_or(0);
+                    let key = &tc.private_key[key_start..];
+                    if key.len() > N * 4 {
+                        return None;
+                    }
+                    let scalar = Fp::from_bigint(BigInt::from_be_bytes(key))?;
+                    let (rx, _) = (&point * &scalar).xy()?;
+                    Some(rx.to_bigint())
+                })();
+
+                if tc.result.must_fail() {
+                    assert!(
+                        result.is_none(),
+                        "tcId {}: expected invalid ({})",
+                        tc.tc_id,
+                        tc.comment
+                    );
+                } else if let Some(rx) = result {
+                    let expected_x = BigInt::<N>::from_be_bytes(&tc.shared_secret);
+                    assert_eq!(rx, expected_x, "tcId {}: {}", tc.tc_id, tc.comment);
+                } else if tc.result == TestResult::Valid {
+                    panic!("tcId {}: expected valid ({})", tc.tc_id, tc.comment);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn secp256r1() {
+        run_scalar_mul_tests::<crate::curves::secp256r1::Config, 8>(TestName::EcdhSecp256r1Ecpoint);
+    }
+
+    #[test]
+    fn secp384r1() {
+        run_scalar_mul_tests::<crate::curves::secp384r1::Config, 12>(
+            TestName::EcdhSecp384r1Ecpoint,
+        );
+    }
+}
