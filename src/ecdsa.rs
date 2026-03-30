@@ -2,6 +2,10 @@
 //!
 //! The caller provides the message hash as a big-endian byte slice (e.g. a SHA-256 digest) and a
 //! cryptographically secure random nonce for signing. No hash functions or RNG are included.
+//! The hash is interpreted as a big-endian integer and reduced mod n (the group order).
+//! For standard pairings (SHA-256 with 256-bit curves, SHA-384 with 384-bit curves) this
+//! matches SEC1 `bits2int`. For non-standard pairings where the hash is wider than the
+//! order, the caller should truncate to `ceil(bit_len(n) / 8)` bytes before passing it in.
 //!
 //! - [`Signature`] - plain `(r, s)` signature with [`sign`](Signature::sign) and
 //!   [`verify`](Signature::verify).
