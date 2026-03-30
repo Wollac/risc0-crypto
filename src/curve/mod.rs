@@ -622,7 +622,7 @@ mod wycheproof {
     };
 
     /// Parses an uncompressed EC point (04 || x || y). Returns `None` for
-    /// compressed, invalid, or wrong-length encodings.
+    /// non-uncompressed, wrong-length, or off-curve encodings.
     // TODO: handle compressed points (02/03 prefix) once point decompression lands
     fn parse_point<C: CurveConfig<N>, const N: usize>(bytes: &[u8]) -> Option<AffinePoint<C, N>> {
         if bytes.first() != Some(&0x04) || bytes.len() != 1 + 2 * N * 4 {
@@ -641,7 +641,6 @@ mod wycheproof {
             for tc in &group.tests {
                 let result = (|| {
                     let point = parse_point::<C, N>(&tc.public_key)?;
-                    // strip leading zero bytes (big-endian unsigned padding)
                     let key_start = tc.private_key.iter().position(|&b| b != 0).unwrap_or(0);
                     let key = &tc.private_key[key_start..];
                     if key.len() > N * 4 {
@@ -652,19 +651,18 @@ mod wycheproof {
                     Some(rx.to_bigint())
                 })();
 
-                let expected_x = BigInt::<N>::from_be_bytes(&tc.shared_secret);
-
-                match (result, tc.result) {
-                    (Some(rx), TestResult::Valid | TestResult::Acceptable) => {
-                        assert_eq!(rx, expected_x, "tcId {}: {}", tc.tc_id, tc.comment);
-                    }
-                    (None, TestResult::Valid) => {
-                        panic!("tcId {}: expected valid ({})", tc.tc_id, tc.comment);
-                    }
-                    (Some(_), TestResult::Invalid) => {
-                        panic!("tcId {}: expected invalid ({})", tc.tc_id, tc.comment);
-                    }
-                    (None, TestResult::Invalid | TestResult::Acceptable) => {}
+                if tc.result.must_fail() {
+                    assert!(
+                        result.is_none(),
+                        "tcId {}: expected invalid ({})",
+                        tc.tc_id,
+                        tc.comment
+                    );
+                } else if let Some(rx) = result {
+                    let expected_x = BigInt::<N>::from_be_bytes(&tc.shared_secret);
+                    assert_eq!(rx, expected_x, "tcId {}: {}", tc.tc_id, tc.comment);
+                } else if tc.result == TestResult::Valid {
+                    panic!("tcId {}: expected valid ({})", tc.tc_id, tc.comment);
                 }
             }
         }
