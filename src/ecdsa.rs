@@ -605,3 +605,64 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod wycheproof {
+    use super::*;
+    use crate::BigInt;
+    use ::wycheproof::ecdsa::{TestName, TestSet};
+    use sha2::Digest;
+
+    /// Parses a P1363 signature (r || s). Returns `None` if malformed.
+    fn parse_sig<C: CurveConfig<N>, const N: usize>(bytes: &[u8]) -> Option<Signature<C, N>> {
+        if bytes.len() != 2 * N * 4 {
+            return None;
+        }
+        let (r, s) = bytes.split_at(N * 4);
+        let r = Fp::from_bigint(BigInt::from_be_bytes(r))?;
+        let s = Fp::from_bigint(BigInt::from_be_bytes(s))?;
+        Signature::new(r, s)
+    }
+
+    fn run_verify_tests<C: CurveConfig<N>, D: Digest, const N: usize>(name: TestName) {
+        let test_set = TestSet::load(name).unwrap();
+
+        for group in &test_set.test_groups {
+            let pk_bytes: &[u8] = &group.key.key;
+
+            assert_eq!(pk_bytes[0], 0x04, "expected uncompressed point");
+            let x = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1..1 + N * 4])).unwrap();
+            let y = Fp::from_bigint(BigInt::from_be_bytes(&pk_bytes[1 + N * 4..])).unwrap();
+            let pubkey = AffinePoint::<C, N>::new_in_subgroup(x, y).unwrap();
+
+            for tc in &group.tests {
+                let verified = parse_sig::<C, N>(&tc.sig)
+                    .is_some_and(|sig| sig.verify(&pubkey, &D::digest(&*tc.msg)));
+
+                let expected = !tc.result.must_fail();
+                assert_eq!(verified, expected, "tcId {}: {}", tc.tc_id, tc.comment);
+            }
+        }
+    }
+
+    #[test]
+    fn secp256k1_sha256() {
+        run_verify_tests::<crate::curves::secp256k1::Config, sha2::Sha256, 8>(
+            TestName::EcdsaSecp256k1Sha256P1363,
+        );
+    }
+
+    #[test]
+    fn secp256r1_sha256() {
+        run_verify_tests::<crate::curves::secp256r1::Config, sha2::Sha256, 8>(
+            TestName::EcdsaSecp256r1Sha256P1363,
+        );
+    }
+
+    #[test]
+    fn secp384r1_sha384() {
+        run_verify_tests::<crate::curves::secp384r1::Config, sha2::Sha384, 12>(
+            TestName::EcdsaSecp384r1Sha384P1363,
+        );
+    }
+}
