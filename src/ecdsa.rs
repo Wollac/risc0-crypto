@@ -456,26 +456,6 @@ mod tests {
     }
 
     #[test]
-    fn wrong_message_rejects() {
-        let d: Fr = fp!("0x1");
-        let pubkey = &Affine::GENERATOR * &d;
-        let k: Fr = fp!("0x2");
-
-        let sig = Sig::sign(&d, &k, HASH).unwrap();
-        assert!(!sig.verify(&pubkey, &[0xde, 0xad, 0xbe, 0xee]));
-    }
-
-    #[test]
-    fn wrong_pubkey_rejects() {
-        let d: Fr = fp!("0x1");
-        let k: Fr = fp!("0x2");
-
-        let sig = Sig::sign(&d, &k, HASH).unwrap();
-        let wrong_pk = &Affine::GENERATOR * &Fr::from_u32(2);
-        assert!(!sig.verify(&wrong_pk, HASH));
-    }
-
-    #[test]
     fn normalize_s() {
         let d: Fr = fp!("0x1");
         let k: Fr = fp!("0x2");

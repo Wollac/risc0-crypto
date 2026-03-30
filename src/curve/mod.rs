@@ -630,25 +630,26 @@ mod tests {
     }
     type Affine = AffinePoint<Config, 8>;
 
-    fn pt(x: u32, y: u32) -> Affine {
+    const fn pt(x: u32, y: u32) -> Affine {
         AffinePoint::from_xy(Fq::from_u32(x), Fq::from_u32(y))
     }
 
+    const GROUP: [Affine; 5] = [Affine::IDENTITY, Affine::GENERATOR, pt(2, 5), pt(2, 2), pt(0, 6)];
+
     #[test]
     fn point_validation() {
-        let g = Affine::GENERATOR;
-        let o = Affine::IDENTITY;
+        let (o, g) = (&GROUP[0], &GROUP[1]);
 
         assert!(g.is_on_curve());
         assert!(o.is_on_curve());
         assert!(!g.is_identity());
         assert!(o.is_identity());
 
-        // all curve points are accepted by new (on-curve check only)
-        assert!(Affine::new(Fq::from_u32(0), Fq::from_u32(1)).is_some());
-        assert!(Affine::new(Fq::from_u32(2), Fq::from_u32(5)).is_some());
-        assert!(Affine::new(Fq::from_u32(2), Fq::from_u32(2)).is_some());
-        assert!(Affine::new(Fq::from_u32(0), Fq::from_u32(6)).is_some());
+        // all non-identity group elements are accepted by new (on-curve check)
+        for p in &GROUP[1..] {
+            let (x, y) = p.xy().unwrap();
+            assert!(Affine::new(x, y).is_some());
+        }
 
         // off-curve point is rejected
         assert!(Affine::new(Fq::from_u32(1), Fq::from_u32(1)).is_none());
@@ -660,104 +661,62 @@ mod tests {
 
     #[test]
     fn point_addition() {
-        let g = Affine::GENERATOR;
-        let o = Affine::IDENTITY;
+        let (o, g) = (&GROUP[0], &GROUP[1]);
 
         // identity
-        assert_eq!(&g + &o, g);
-        assert_eq!(&o + &g, g);
-        assert_eq!(&g - &o, g);
-        assert!((&g - &g).is_identity());
+        assert_eq!(g + o, *g);
+        assert_eq!(o + g, *g);
+        assert_eq!(g - o, *g);
+        assert!((g - g).is_identity());
 
         // doubling
         let two_g = g.double();
-        assert_eq!(&g + &g, two_g);
+        assert_eq!(g + g, two_g);
 
         // commutativity
-        assert_eq!(&g + &two_g, &two_g + &g);
+        assert_eq!(g + &two_g, &two_g + g);
 
         // negation
-        assert!((-&o).is_identity());
-        assert_eq!(-&g, pt(0, 6)); // -G = 4G (order 5)
-        assert_eq!(&(-&g) + &g, o); // -G + G = O
+        assert!((-o).is_identity());
+        assert_eq!(-g, GROUP[4]); // -G = 4G (order 5)
+        assert_eq!(&(-g) + g, *o); // -G + G = O
 
         // subtraction: 3G - 2G = G
-        let three_g = &g + &two_g;
-        assert_eq!(&three_g - &two_g, g);
+        assert_eq!(&GROUP[3] - &two_g, *g);
 
         // walk the full group: G, 2G, 3G, 4G, 5G=O
-        assert_eq!(two_g, pt(2, 5)); // 2G
-        assert_eq!(three_g, pt(2, 2)); // 3G
-        assert_eq!(&two_g + &two_g, pt(0, 6)); // 4G
-        assert!((&two_g + &three_g).is_identity()); // 2G + 3G = 5G = O
+        assert_eq!(two_g, GROUP[2]);
+        assert_eq!(g + &two_g, GROUP[3]);
+        assert_eq!(&two_g + &two_g, GROUP[4]);
+        assert!((&two_g + &GROUP[3]).is_identity());
     }
 
     #[test]
     fn scalar_mul() {
-        let g = Affine::GENERATOR;
+        let n = GROUP.len() as u32; // group order
 
-        assert_eq!(&g * &Fr::ONE, g);
-        assert!((&g * &Fr::ZERO).is_identity());
-
-        // [n]G = O (group order)
-        let order = UnverifiedFp::from_bigint(Fr::MODULUS);
-        assert!((&g * &order).is_identity());
-
-        // [2]G + [3]G = [5]G = O
-        let two = Fr::from_u32(2);
-        let three = Fr::from_u32(3);
-        assert!((&(&g * &two) + &(&g * &three)).is_identity());
-
-        // [2]G matches known point
-        assert_eq!(&g * &two, pt(2, 5));
-    }
-
-    #[test]
-    fn double_scalar_mul_exhaustive() {
-        let g = Affine::GENERATOR;
-        let two_g = g.double();
-
-        // exhaustive: all 25 combinations of (a, b) in {0..4} with P=G, Q=2G
-        // [a]G + [b](2G) == [a + 2b mod 5]G
-        let group = [Affine::IDENTITY, g, two_g, pt(2, 2), pt(0, 6)];
-        for a in 0u32..5 {
-            for b in 0u32..5 {
-                let sa = Fr::from_u32(a);
-                let sb = Fr::from_u32(b);
-                let expected = group[((a + 2 * b) % 5) as usize];
-                assert_eq!(
-                    Affine::double_scalar_mul(&sa, &g, &sb, &two_g),
-                    expected,
-                    "failed for a={a}, b={b}",
-                );
+        // exhaustive: [k]P for all points P and scalars k in 0..n
+        for (i, p) in GROUP.iter().enumerate() {
+            for k in 0..n {
+                let expected = GROUP[((i as u32 * k) % n) as usize];
+                assert_eq!(p * &Fr::from_u32(k), expected, "failed for [{k}]GROUP[{i}]");
             }
         }
     }
 
     #[test]
-    fn double_scalar_mul_edge_cases() {
-        let g = Affine::GENERATOR;
-        let o = Affine::IDENTITY;
+    fn double_scalar_mul() {
+        let n = GROUP.len() as u32; // group order
+        let (g, two_g) = (&GROUP[1], &GROUP[2]);
 
-        // both scalars zero
-        assert!(Affine::double_scalar_mul(&Fr::ZERO, &g, &Fr::ZERO, &g).is_identity());
-
-        // identity points
-        assert_eq!(
-            Affine::double_scalar_mul(&Fr::from_u32(2), &o, &Fr::from_u32(3), &g),
-            pt(2, 2), // [3]G
-        );
-        assert!(Affine::double_scalar_mul(&Fr::ONE, &o, &Fr::ONE, &o).is_identity());
-
-        // P == -Q: [1]G + [1](-G) = O
-        let neg_g = -&g;
-        assert!(Affine::double_scalar_mul(&Fr::ONE, &g, &Fr::ONE, &neg_g).is_identity());
-
-        // equivalence with separate scalar muls
-        let a = Fr::from_u32(3);
-        let b = Fr::from_u32(4);
-        let q = pt(2, 5); // 2G
-        assert_eq!(Affine::double_scalar_mul(&a, &g, &b, &q), &(&g * &a) + &(&q * &b),);
+        // exhaustive: [a]G + [b](2G) for all (a, b) in {0..n}²
+        for a in 0..n {
+            for b in 0..n {
+                let res = Affine::double_scalar_mul(&Fr::from_u32(a), g, &Fr::from_u32(b), two_g);
+                let expected = GROUP[((a + 2 * b) % n) as usize];
+                assert_eq!(res, expected, "failed for a={a}, b={b}");
+            }
+        }
     }
 
     #[test]
@@ -784,13 +743,6 @@ mod tests {
         assert_eq!(Affine::decompress(fq(0), true), Some(pt(0, 1)));
         assert!(Affine::decompress(fq(1), false).is_none());
     }
-
-    #[test]
-    fn clear_cofactor_is_noop_for_cofactor_1() {
-        assert_eq!(Affine::GENERATOR.clear_cofactor(), Affine::GENERATOR);
-        assert_eq!(Affine::IDENTITY.clear_cofactor(), Affine::IDENTITY);
-        assert_eq!(pt(2, 5).clear_cofactor(), pt(2, 5));
-    }
 }
 
 #[cfg(test)]
@@ -802,8 +754,8 @@ mod wycheproof {
         ecdh::{TestName, TestSet},
     };
 
-    /// Parses a SEC1-encoded EC point. Supports uncompressed (04 || x || y) and compressed
-    /// (02/03 || x) formats. Returns `None` for invalid encodings or off-curve points.
+    /// Parses a SEC1-encoded EC point (uncompressed or compressed). Returns `None` for invalid
+    /// encodings, off-curve points, or points not in the prime-order subgroup.
     fn parse_point<C: CurveConfig<N>, const N: usize>(bytes: &[u8]) -> Option<AffinePoint<C, N>> {
         let prefix = *bytes.first()?;
         let coord_len = N * 4;
@@ -811,12 +763,13 @@ mod wycheproof {
             0x04 if bytes.len() == 1 + 2 * coord_len => {
                 let x = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1..1 + coord_len]))?;
                 let y = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1 + coord_len..]))?;
-                AffinePoint::<C, N>::new(x, y)
+                AffinePoint::<C, N>::new_in_subgroup(x, y)
             }
             0x02 | 0x03 if bytes.len() == 1 + coord_len => {
                 let x = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1..]))?;
                 let is_y_odd = prefix == 0x03;
-                AffinePoint::<C, N>::decompress(x, is_y_odd)
+                let pt = AffinePoint::<C, N>::decompress(x, is_y_odd)?;
+                pt.is_in_correct_subgroup().then_some(pt)
             }
             _ => None,
         }

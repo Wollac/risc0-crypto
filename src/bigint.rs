@@ -33,6 +33,17 @@ impl<const N: usize> BigInt<N> {
         repr
     }
 
+    /// Extracts the value as a `u32`. Panics if any upper limb is nonzero.
+    #[inline]
+    pub const fn as_u32(&self) -> u32 {
+        let mut i = 1;
+        while i < N {
+            assert!(self.0[i] == 0, "BigInt value does not fit in u32");
+            i += 1;
+        }
+        self.0[0]
+    }
+
     /// Parse a hex string at compile time.
     ///
     /// Requires a `0x` prefix. Underscores are ignored. Values shorter than `N` limbs are
