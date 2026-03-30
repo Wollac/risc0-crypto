@@ -4,6 +4,7 @@
 pub mod bigint;
 pub mod curve;
 pub mod curves;
+pub mod ecdsa;
 pub mod field;
 pub mod modexp;
 

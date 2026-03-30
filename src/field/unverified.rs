@@ -1,12 +1,20 @@
 use crate::{
-    BigInt, Fp,
+    BigInt, BitAccess, Fp,
     field::{FieldConfig, FieldOps as _},
 };
 use core::{
-    cmp::Ordering,
     marker::PhantomData,
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
+
+/// Asserts that `$val` is in `[0, p)`, panicking via [`canonical_panic`] if not.
+macro_rules! assert_canonical {
+    ($val:expr) => {
+        if !$val.is_canonical() {
+            canonical_panic();
+        }
+    };
+}
 
 /// A field element resulting from an under-constrained VM operation.
 ///
@@ -78,7 +86,7 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
     /// non-canonical (e.g. cross-field reduction), use [`Fp::reduce_from_bigint`] instead.
     #[inline(always)]
     pub const fn check(self) -> Fp<P, N> {
-        assert!(self.is_canonical(), "unverified field element >= modulus");
+        assert_canonical!(self);
         Fp { inner: self.inner, _marker: PhantomData }
     }
 
@@ -86,25 +94,23 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
     /// otherwise. Zero-cost - no copy, just a pointer cast.
     #[inline(always)]
     pub const fn check_ref(&self) -> &Fp<P, N> {
-        assert!(self.is_canonical(), "unverified field element >= modulus");
+        assert_canonical!(self);
         // SAFETY: caller asserted is_canonical
         unsafe { self.as_fp_ref_unchecked() }
     }
 
     /// Field equality using check semantics. Returns `true` if the raw integers are equal.
-    /// When they differ, asserts canonicality and returns `false` - panics if either value is
-    /// non-canonical. Only the larger value is explicitly checked: if the smaller were `>= p`,
-    /// the larger would also be `> p`, so a single check suffices.
+    /// When they differ, asserts the larger value is canonical and returns `false`.
     #[inline]
     pub fn check_is_eq(&self, other: &Self) -> bool {
         match self.inner.cmp(&other.inner) {
-            Ordering::Equal => true,
-            Ordering::Less => {
-                assert!(other.is_canonical(), "unverified field element >= modulus");
+            core::cmp::Ordering::Equal => true,
+            core::cmp::Ordering::Less => {
+                assert_canonical!(other);
                 false
             }
-            Ordering::Greater => {
-                assert!(self.is_canonical(), "unverified field element >= modulus");
+            core::cmp::Ordering::Greater => {
+                assert_canonical!(self);
                 false
             }
         }
@@ -130,10 +136,40 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
         P::Ops::neg_in_place(self);
     }
 
+    /// Computes `self² mod p` in place.
+    #[inline]
+    pub fn square_in_place(&mut self) {
+        P::Ops::square_in_place(self);
+    }
+
     /// Computes `self⁻¹ mod p`. Panics if `self` is zero.
     #[inline]
     pub fn inverse(&self) -> Self {
         P::Ops::inv(self)
+    }
+
+    /// Computes `self^exp mod p` via square-and-multiply.
+    pub fn pow(&self, exp: &(impl BitAccess + ?Sized)) -> Self {
+        let n = exp.bits();
+        if n == 0 {
+            return Fp::ONE.into();
+        }
+        let mut acc = *self;
+        for i in (0..n - 1).rev() {
+            acc.square_in_place();
+            if exp.bit(i) {
+                acc.mul_assign(self);
+            }
+        }
+        acc
+    }
+
+    /// Computes a square root mod p via `self^((p+1)/4)`. Returns `None` if `self` is not a
+    /// quadratic residue. Only available when `p % 4 == 3` (enforced at compile time).
+    #[inline]
+    pub fn sqrt(&self) -> Option<Self> {
+        let root = self.pow(&P::MODULUS_PLUS_ONE_DIV_FOUR);
+        if (&root * &root).check_is_eq(self) { Some(root) } else { None }
     }
 }
 
@@ -232,6 +268,15 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<Self>> MulAssign<&T> for Unveri
     fn mul_assign(&mut self, rhs: &T) {
         P::Ops::mul_assign(self, rhs.as_ref());
     }
+}
+
+/// Panics with the canonical assertion message. `#[cold] #[inline(never)]` keeps the panic
+/// formatting code out of every `check()` / `check_is_eq()` call site, reducing code size and
+/// improving inlining of the hot comparison logic.
+#[cold]
+#[inline(never)]
+pub(super) const fn canonical_panic() -> ! {
+    panic!("unverified field element >= modulus")
 }
 
 #[cfg(test)]
