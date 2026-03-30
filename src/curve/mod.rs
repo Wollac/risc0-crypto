@@ -802,16 +802,24 @@ mod wycheproof {
         ecdh::{TestName, TestSet},
     };
 
-    /// Parses an uncompressed EC point (04 || x || y). Returns `None` for
-    /// non-uncompressed, wrong-length, or off-curve encodings.
-    // TODO: handle compressed points (02/03 prefix) once point decompression lands
+    /// Parses a SEC1-encoded EC point. Supports uncompressed (04 || x || y) and compressed
+    /// (02/03 || x) formats. Returns `None` for invalid encodings or off-curve points.
     fn parse_point<C: CurveConfig<N>, const N: usize>(bytes: &[u8]) -> Option<AffinePoint<C, N>> {
-        if bytes.first() != Some(&0x04) || bytes.len() != 1 + 2 * N * 4 {
-            return None;
+        let prefix = *bytes.first()?;
+        let coord_len = N * 4;
+        match prefix {
+            0x04 if bytes.len() == 1 + 2 * coord_len => {
+                let x = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1..1 + coord_len]))?;
+                let y = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1 + coord_len..]))?;
+                AffinePoint::<C, N>::new(x, y)
+            }
+            0x02 | 0x03 if bytes.len() == 1 + coord_len => {
+                let x = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1..]))?;
+                let is_y_odd = prefix == 0x03;
+                AffinePoint::<C, N>::decompress(x, is_y_odd)
+            }
+            _ => None,
         }
-        let x = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1..1 + N * 4]))?;
-        let y = Fp::from_bigint(BigInt::from_be_bytes(&bytes[1 + N * 4..]))?;
-        AffinePoint::<C, N>::new(x, y)
     }
 
     /// Runs Wycheproof ECDH EcPoint tests as scalar multiplication tests.
