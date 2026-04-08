@@ -95,3 +95,45 @@ jobs:
       - run: cargo doc --lib --no-deps
         env:
           RUSTDOCFLAGS: -D warnings
+
+  bench:
+    name: Benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: bench
+
+      - name: Install rzup
+        run: curl -L https://risczero.com/install | bash
+
+      - name: Install risc0 toolchain
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.risc0/bin:$PATH"
+          rzup install rust
+          rzup install cpp
+
+      - name: Run benchmarks
+        run: >
+          cargo run --release
+          --manifest-path bench/Cargo.toml
+          -- --json bench-results.json
+
+      - name: Track benchmark results
+        uses: benchmark-action/github-action-benchmark@v1
+        with:
+          name: risc0-crypto benchmarks
+          tool: customSmallerIsBetter
+          output-file-path: bench-results.json
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          auto-push: true
+          alert-threshold: "101%"
+          fail-on-alert: true
+          comment-on-alert: true
+          summary-always: true
