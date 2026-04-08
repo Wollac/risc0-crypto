@@ -270,6 +270,71 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<Self>> MulAssign<&T> for Unveri
     }
 }
 
+// --- UnverifiedField trait impl ---
+
+impl<P: FieldConfig<N>, const N: usize> super::element::UnverifiedField for UnverifiedFp<P, N> {
+    type Verified = Fp<P, N>;
+
+    const ZERO: Self = Self::from_bigint(BigInt::ZERO);
+
+    #[inline]
+    fn add(&self, other: &Self) -> Self {
+        P::Ops::add(self, other)
+    }
+    #[inline]
+    fn sub(&self, other: &Self) -> Self {
+        P::Ops::sub(self, other)
+    }
+    #[inline]
+    fn mul(&self, other: &Self) -> Self {
+        P::Ops::mul(self, other)
+    }
+    #[inline]
+    fn add_assign(&mut self, other: &Self) {
+        P::Ops::add_assign(self, other);
+    }
+    #[inline]
+    fn sub_assign(&mut self, other: &Self) {
+        P::Ops::sub_assign(self, other);
+    }
+    #[inline]
+    fn mul_assign(&mut self, other: &Self) {
+        P::Ops::mul_assign(self, other);
+    }
+    #[inline]
+    fn neg_in_place(&mut self) {
+        P::Ops::neg_in_place(self);
+    }
+    #[inline]
+    fn square_in_place(&mut self) {
+        P::Ops::square_in_place(self);
+    }
+    #[inline]
+    fn inverse(&self) -> Self {
+        P::Ops::inv(self)
+    }
+    #[inline(always)]
+    fn check(self) -> Fp<P, N> {
+        self.check()
+    }
+    #[inline(always)]
+    fn check_ref(&self) -> &Fp<P, N> {
+        self.check_ref()
+    }
+    #[inline]
+    fn check_is_eq(&self, other: &Self) -> bool {
+        self.check_is_eq(other)
+    }
+    #[inline]
+    fn raw_eq(&self, other: &Self) -> bool {
+        self.raw_eq(other)
+    }
+    #[inline]
+    fn raw_is_zero(&self) -> bool {
+        self.as_bigint().is_zero()
+    }
+}
+
 /// Panics with the canonical assertion message. `#[cold] #[inline(never)]` keeps the panic
 /// formatting code out of every `check()` / `check_is_eq()` call site, reducing code size and
 /// improving inlining of the hot comparison logic.

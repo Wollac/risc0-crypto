@@ -1,3 +1,4 @@
+pub mod element;
 mod ops;
 mod unverified;
 
@@ -8,6 +9,7 @@ use core::{
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
 };
 
+pub use element::{Field, PrimeField, UnverifiedField};
 pub use ops::R0VMFieldOps;
 pub use unverified::UnverifiedFp;
 
@@ -415,6 +417,45 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> MulAssign<
         if self.inner >= P::MODULUS {
             unverified::canonical_panic();
         }
+    }
+}
+
+// --- Field trait impls ---
+
+impl<P: FieldConfig<N>, const N: usize> Field for Fp<P, N> {
+    type Unverified = UnverifiedFp<P, N>;
+
+    const ZERO: Self = P::ZERO;
+    const ONE: Self = P::ONE;
+
+    #[inline]
+    fn is_zero(&self) -> bool {
+        self.is_zero()
+    }
+
+    #[inline]
+    fn as_unverified(&self) -> &UnverifiedFp<P, N> {
+        self.as_unverified()
+    }
+
+    #[inline]
+    fn into_unverified(self) -> UnverifiedFp<P, N> {
+        UnverifiedFp::from_bigint(self.inner)
+    }
+
+    #[inline]
+    fn neg(&self) -> Self {
+        -self
+    }
+}
+
+impl<P: FieldConfig<N>, const N: usize> PrimeField<N> for Fp<P, N> {
+    const MODULUS: BigInt<N> = P::MODULUS;
+    const MODULUS_BIT_LEN: u32 = P::MODULUS_BIT_LEN;
+
+    #[inline]
+    fn to_bigint(self) -> BigInt<N> {
+        self.inner
     }
 }
 

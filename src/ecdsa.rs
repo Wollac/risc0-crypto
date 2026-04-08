@@ -68,10 +68,7 @@
 //!
 //! Nonce reuse or predictable nonces leak the private key.
 
-use crate::{
-    AffinePoint, CurveConfig, FieldConfig, Fp,
-    curve::{BaseField, ScalarField},
-};
+use crate::{AffinePoint, CurveConfig, FieldConfig, Fp, curve::ScalarField};
 
 /// An ECDSA signature `(r, s)` over curve `C`.
 #[derive(educe::Educe)]
@@ -89,21 +86,6 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
         if r.is_zero() || s.is_zero() {
             return None;
         }
-        Some(Self { r, s })
-    }
-
-    /// Signs a message hash with private key `d` and nonce `k`.
-    ///
-    /// `hash` is the big-endian digest output (e.g. SHA-256), reduced mod n to produce the scalar
-    /// `z`. Returns `None` if the nonce produces `r == 0` or `s == 0` (retry with a different
-    /// nonce). The caller must ensure `k` is unique and unpredictable per signature - nonce reuse
-    /// leaks the private key.
-    ///
-    /// # Panics
-    ///
-    /// Panics if `k` is zero.
-    pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
-        let (r, s, ..) = sign_raw::<C, N>(d, k, hash)?;
         Some(Self { r, s })
     }
 
@@ -125,10 +107,41 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
         (self.r, self.s)
     }
 
-    /// Reconstructs the candidate nonce point `R' = [z*s⁻¹]G + [r*s⁻¹]Q`.
+    /// Normalizes into "low S" form as described in [BIP 0062: Dealing with Malleability][1].
+    /// Returns `None` if already normalized.
     ///
-    /// This is the core ECDSA verification equation. If the signature is valid for `Q = pubkey`,
-    /// then `R' = [k]G` (the original nonce point).
+    /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
+    pub fn normalize_s(&self) -> Option<Self> {
+        if self.s.is_high() { Some(Self { r: self.r, s: -&self.s }) } else { None }
+    }
+
+    /// Returns the signature in "low S" form, negating `s` if needed. See
+    /// [`normalize_s`](Self::normalize_s).
+    #[inline]
+    pub fn normalized_s(self) -> Self {
+        self.normalize_s().unwrap_or(self)
+    }
+}
+
+// --- ECDSA sign/verify requires prime-field base coordinates ---
+
+impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize> Signature<C, N> {
+    /// Signs a message hash with private key `d` and nonce `k`.
+    ///
+    /// `hash` is the big-endian digest output (e.g. SHA-256), reduced mod n to produce the scalar
+    /// `z`. Returns `None` if the nonce produces `r == 0` or `s == 0` (retry with a different
+    /// nonce). The caller must ensure `k` is unique and unpredictable per signature - nonce reuse
+    /// leaks the private key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `k` is zero.
+    pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
+        let (r, s, ..) = sign_raw::<P, C, N>(d, k, hash)?;
+        Some(Self { r, s })
+    }
+
+    /// Reconstructs the candidate nonce point `R' = [z*s⁻¹]G + [r*s⁻¹]Q`.
     fn reconstruct_r(&self, pubkey: &AffinePoint<C, N>, hash: &[u8]) -> AffinePoint<C, N> {
         let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
 
@@ -147,30 +160,11 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     }
 
     /// Verifies this signature against a message hash and public key `pubkey`.
-    ///
-    /// `hash` is the big-endian digest output, reduced mod n to produce the scalar `z`.
-    /// `pubkey` must be in the prime-order subgroup (e.g. constructed via
-    /// [`AffinePoint::new_in_subgroup`]).
     pub fn verify(&self, pubkey: &AffinePoint<C, N>, hash: &[u8]) -> bool {
         let Some((rx, _)) = self.reconstruct_r(pubkey, hash).xy() else {
             return false;
         };
-        base_to_scalar::<C, N>(rx) == self.r
-    }
-
-    /// Normalizes into "low S" form as described in [BIP 0062: Dealing with Malleability][1].
-    /// Returns `None` if already normalized.
-    ///
-    /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
-    pub fn normalize_s(&self) -> Option<Self> {
-        if self.s.is_high() { Some(Self { r: self.r, s: -&self.s }) } else { None }
-    }
-
-    /// Returns the signature in "low S" form, negating `s` if needed. See
-    /// [`normalize_s`](Self::normalize_s).
-    #[inline]
-    pub fn normalized_s(self) -> Self {
-        self.normalize_s().unwrap_or(self)
+        base_to_scalar::<P, C, N>(rx) == self.r
     }
 }
 
@@ -260,24 +254,6 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
         Self { sig, recovery_id }
     }
 
-    /// Signs a message hash with private key `d` and nonce `k`, producing a recoverable signature.
-    ///
-    /// The returned signature is **not** automatically normalized to low-S. Call
-    /// [`normalized_s`](Self::normalized_s) if your protocol requires it (e.g. Ethereum/Bitcoin).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `k` is zero.
-    pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
-        let (r, s, x, y) = sign_raw::<C, N>(d, k, hash)?;
-
-        // x < p < 2n (enforced by base_to_scalar), so one bit suffices for recovery
-        let is_x_reduced = x.as_bigint() >= &C::ScalarFieldConfig::MODULUS;
-        let is_y_odd = y.as_bigint().is_odd();
-
-        Some(Self { sig: Signature { r, s }, recovery_id: RecoveryId::new(is_y_odd, is_x_reduced) })
-    }
-
     /// Returns the inner [`Signature`].
     #[inline]
     pub const fn signature(&self) -> &Signature<C, N> {
@@ -296,69 +272,6 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
         (self.sig, self.recovery_id)
     }
 
-    /// Verifies this signature and checks that `pubkey` is the unique public key recoverable from
-    /// the signature, recovery ID, and `hash`.
-    ///
-    /// This is "recovery with a hint" - the caller provides a precomputed public key (e.g. from
-    /// the zkVM host) and this method verifies it matches. No point decompression (sqrt) is
-    /// needed.
-    ///
-    /// Reconstructs the nonce point via the verification equation; if the signature is valid for
-    /// `pubkey`, the result equals `[k]G` and we can verify the recovery ID against it.
-    pub fn verify(&self, pubkey: &AffinePoint<C, N>, hash: &[u8]) -> bool {
-        let Some((rx, ry)) = self.sig.reconstruct_r(pubkey, hash).xy() else {
-            return false;
-        };
-
-        // recovery ID checks: y parity and x reduction must match
-        if self.recovery_id.is_y_odd() != ry.as_bigint().is_odd() {
-            return false;
-        }
-        // x < p < 2n (enforced by base_to_scalar), so one bit suffices for recovery
-        if self.recovery_id.is_x_reduced() != (rx.as_bigint() >= &C::ScalarFieldConfig::MODULUS) {
-            return false;
-        }
-
-        // standard ECDSA check: R'.x mod n == r
-        base_to_scalar::<C, N>(rx) == self.sig.r
-    }
-
-    /// Recovers the public key from this signature, recovery ID, and message hash.
-    ///
-    /// Given `(r, s, v, hash)`, returns the unique public key `Q` such that `(r, s)` is a
-    /// valid ECDSA signature on `hash` under `Q` with recovery ID `v`. Returns `None` if the
-    /// recovery ID is inconsistent (e.g., no curve point at the recovered x-coordinate).
-    pub fn recover(&self, hash: &[u8]) -> Option<AffinePoint<C, N>> {
-        // reconstruct R.x in the base field. r = R.x mod n, so we may need to undo the reduction
-        // depending on the recovery ID
-        let rx = if self.recovery_id.is_x_reduced() {
-            // R.x >= n before reduction, so R.x = r + n
-            let rx = self.sig.r.as_bigint() + &C::ScalarFieldConfig::MODULUS;
-            if &rx < self.sig.r.as_bigint() {
-                return None; // r + n overflowed N limbs
-            }
-            BaseField::<C, N>::from_bigint(rx)? // None if r + n >= p
-        } else if C::ScalarFieldConfig::MODULUS.const_lt(&C::BaseFieldConfig::MODULUS) {
-            // SAFETY: n < p, so r < n < p is already a valid base field element
-            unsafe { BaseField::<C, N>::from_bigint_unchecked(self.sig.r.into()) }
-        } else {
-            // n >= p: None if r >= p
-            BaseField::<C, N>::from_bigint(self.sig.r.into())?
-        };
-        let r_pt = AffinePoint::decompress(rx, self.recovery_id.is_y_odd())?;
-
-        // Q = [r⁻¹]([s]R - [z]G) = [r⁻¹s]R + [-(r⁻¹z)]G
-        // double_scalar_mul computes [u1]R + [u2]G, so we negate u2 for the subtraction
-        let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
-        let r_inv = self.sig.r.as_unverified().inverse();
-        let u1 = &r_inv * &self.sig.s; // r⁻¹s (scalar for R)
-        let mut u2 = &r_inv * &z; // r⁻¹z (scalar for G, before negation)
-        u2.neg_in_place();
-
-        let g_pt = &AffinePoint::GENERATOR;
-        Some(AffinePoint::double_scalar_mul(u1.check_ref(), &r_pt, u2.check_ref(), g_pt))
-    }
-
     /// Normalizes into "low S" form, adjusting the recovery ID accordingly. Returns `None` if
     /// already normalized.
     pub fn normalize_s(&self) -> Option<Self> {
@@ -374,16 +287,82 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
     }
 }
 
+// --- RecoverableSignature sign/verify/recover requires prime-field base coordinates ---
+
+impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>
+    RecoverableSignature<C, N>
+{
+    /// Signs a message hash with private key `d` and nonce `k`, producing a recoverable
+    /// signature. The returned signature is **not** automatically normalized to low-S. Call
+    /// [`normalized_s`](Self::normalized_s) if your protocol requires it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `k` is zero.
+    pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
+        let (r, s, x, y) = sign_raw::<P, C, N>(d, k, hash)?;
+
+        // x < p < 2n (enforced by base_to_scalar), so one bit suffices for recovery
+        let is_x_reduced = x.as_bigint() >= &C::ScalarFieldConfig::MODULUS;
+        let is_y_odd = y.as_bigint().is_odd();
+
+        Some(Self { sig: Signature { r, s }, recovery_id: RecoveryId::new(is_y_odd, is_x_reduced) })
+    }
+
+    /// Verifies this signature and checks that `pubkey` is the unique public key recoverable from
+    /// the signature, recovery ID, and `hash`.
+    pub fn verify(&self, pubkey: &AffinePoint<C, N>, hash: &[u8]) -> bool {
+        let Some((rx, ry)) = self.sig.reconstruct_r(pubkey, hash).xy() else {
+            return false;
+        };
+
+        // recovery ID checks: y parity and x reduction must match
+        if self.recovery_id.is_y_odd() != ry.as_bigint().is_odd() {
+            return false;
+        }
+        if self.recovery_id.is_x_reduced() != (rx.as_bigint() >= &C::ScalarFieldConfig::MODULUS) {
+            return false;
+        }
+
+        base_to_scalar::<P, C, N>(rx) == self.sig.r
+    }
+
+    /// Recovers the public key from this signature, recovery ID, and message hash.
+    pub fn recover(&self, hash: &[u8]) -> Option<AffinePoint<C, N>> {
+        let rx = if self.recovery_id.is_x_reduced() {
+            let rx = self.sig.r.as_bigint() + &C::ScalarFieldConfig::MODULUS;
+            if &rx < self.sig.r.as_bigint() {
+                return None;
+            }
+            Fp::<P, N>::from_bigint(rx)?
+        } else if C::ScalarFieldConfig::MODULUS.const_lt(&P::MODULUS) {
+            // SAFETY: n < p, so r < n < p is already a valid base field element
+            unsafe { Fp::<P, N>::from_bigint_unchecked(self.sig.r.into()) }
+        } else {
+            Fp::<P, N>::from_bigint(self.sig.r.into())?
+        };
+        let r_pt = AffinePoint::decompress(rx, self.recovery_id.is_y_odd())?;
+
+        let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
+        let r_inv = self.sig.r.as_unverified().inverse();
+        let u1 = &r_inv * &self.sig.s;
+        let mut u2 = &r_inv * &z;
+        u2.neg_in_place();
+
+        let g_pt = &AffinePoint::GENERATOR;
+        Some(AffinePoint::double_scalar_mul(u1.check_ref(), &r_pt, u2.check_ref(), g_pt))
+    }
+}
+
 /// `(r, s, R.x, R.y)` from the core signing computation.
-type SignRaw<C, const N: usize> =
-    (ScalarField<C, N>, ScalarField<C, N>, BaseField<C, N>, BaseField<C, N>);
+type SignRaw<P, C, const N: usize> = (ScalarField<C, N>, ScalarField<C, N>, Fp<P, N>, Fp<P, N>);
 
 /// Core ECDSA signing computation. Returns `(r, s, R.x, R.y)`. Panics if `k` is zero.
-fn sign_raw<C: CurveConfig<N>, const N: usize>(
+fn sign_raw<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>(
     d: &ScalarField<C, N>,
     k: &ScalarField<C, N>,
     hash: &[u8],
-) -> Option<SignRaw<C, N>> {
+) -> Option<SignRaw<P, C, N>> {
     assert!(!k.is_zero(), "nonce k must be nonzero");
 
     // R = [k]G
@@ -392,7 +371,7 @@ fn sign_raw<C: CurveConfig<N>, const N: usize>(
     let (x, y) = unsafe { r_pt.xy().unwrap_unchecked() };
 
     // r = R.x mod n
-    let r = base_to_scalar::<C, N>(x);
+    let r = base_to_scalar::<P, C, N>(x);
     if r.is_zero() {
         return None;
     }
@@ -410,10 +389,12 @@ fn sign_raw<C: CurveConfig<N>, const N: usize>(
 }
 
 /// Interprets a base field element as a scalar, reducing mod n.
-fn base_to_scalar<C: CurveConfig<N>, const N: usize>(x: BaseField<C, N>) -> ScalarField<C, N> {
+fn base_to_scalar<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>(
+    x: Fp<P, N>,
+) -> ScalarField<C, N> {
     const {
         assert!(
-            C::ScalarFieldConfig::MODULUS_BIT_LEN >= C::BaseFieldConfig::MODULUS_BIT_LEN,
+            C::ScalarFieldConfig::MODULUS_BIT_LEN >= P::MODULUS_BIT_LEN,
             "ECDSA requires scalar and base fields to have similar bit length",
         );
     }
@@ -608,7 +589,14 @@ mod wycheproof {
         Signature::new(r, s)
     }
 
-    fn run_verify_tests<C: CurveConfig<N>, D: Digest, const N: usize>(name: TestName) {
+    fn run_verify_tests<
+        P: FieldConfig<N>,
+        C: CurveConfig<N, BaseField = Fp<P, N>>,
+        D: Digest,
+        const N: usize,
+    >(
+        name: TestName,
+    ) {
         let test_set = TestSet::load(name).unwrap();
 
         for group in &test_set.test_groups {
@@ -631,21 +619,24 @@ mod wycheproof {
 
     #[test]
     fn secp256k1_sha256() {
-        run_verify_tests::<crate::curves::secp256k1::Config, sha2::Sha256, 8>(
+        use crate::curves::secp256k1;
+        run_verify_tests::<secp256k1::FqConfig, secp256k1::Config, sha2::Sha256, 8>(
             TestName::EcdsaSecp256k1Sha256P1363,
         );
     }
 
     #[test]
     fn secp256r1_sha256() {
-        run_verify_tests::<crate::curves::secp256r1::Config, sha2::Sha256, 8>(
+        use crate::curves::secp256r1;
+        run_verify_tests::<secp256r1::FqConfig, secp256r1::Config, sha2::Sha256, 8>(
             TestName::EcdsaSecp256r1Sha256P1363,
         );
     }
 
     #[test]
     fn secp384r1_sha384() {
-        run_verify_tests::<crate::curves::secp384r1::Config, sha2::Sha384, 12>(
+        use crate::curves::secp384r1;
+        run_verify_tests::<secp384r1::FqConfig, secp384r1::Config, sha2::Sha384, 12>(
             TestName::EcdsaSecp384r1Sha384P1363,
         );
     }
