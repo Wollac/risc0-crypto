@@ -112,3 +112,144 @@ pub trait PrimeField<const N: usize>: Field<Unverified: TransparentWrapper<BigIn
     /// Returns the underlying [`BigInt`] by value.
     fn to_bigint(self) -> BigInt<N>;
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::{
+        BigInt, Fp256,
+        field::{FieldConfig, R0VMFieldOps},
+    };
+
+    // Test field: F_7 (same as field/mod.rs and field/unverified.rs tests).
+    enum P {}
+    impl FieldConfig<8> for P {
+        const MODULUS: BigInt<8> = BigInt::from_u32(7);
+        type Ops = R0VMFieldOps;
+    }
+
+    type F = Fp256<P>;
+    type UF = crate::UnverifiedFp<P, 8>;
+
+    fn f(v: u32) -> F {
+        F::from_u32(v)
+    }
+    fn uf(v: u32) -> UF {
+        UF::from_bigint(BigInt::from_u32(v))
+    }
+
+    #[test]
+    fn field_trait() {
+        assert!(<F as Field>::ZERO.is_zero());
+        assert!(!<F as Field>::ONE.is_zero());
+
+        // as_unverified / into_unverified roundtrip
+        let a = f(3);
+        assert_eq!(Field::as_unverified(&a).check(), a);
+        assert_eq!(Field::into_unverified(a).check(), a);
+
+        // neg
+        assert_eq!(Field::neg(&f(0)), f(0));
+        assert_eq!(Field::neg(&f(3)), f(4)); // -3 mod 7
+    }
+
+    #[test]
+    fn unverified_field_axioms() {
+        let (a, b, c) = (uf(3), uf(5), uf(2));
+        let one = Field::into_unverified(F::ONE);
+
+        // commutativity
+        assert_eq!(a.add(&b).check(), b.add(&a).check());
+        assert_eq!(a.mul(&b).check(), b.mul(&a).check());
+
+        // associativity
+        assert_eq!(a.add(&b).add(&c).check(), a.add(&b.add(&c)).check());
+        assert_eq!(a.mul(&b).mul(&c).check(), a.mul(&b.mul(&c)).check());
+
+        // identity
+        assert_eq!(a.add(&UF::ZERO).check(), f(3));
+        assert_eq!(a.mul(&one).check(), f(3));
+
+        // inverse
+        let mut neg_a = a;
+        neg_a.neg_in_place();
+        assert_eq!(a.add(&neg_a).check(), f(0));
+        assert_eq!(a.mul(&a.inverse()).check(), f(1));
+
+        // distributivity
+        assert_eq!(a.mul(&b.add(&c)).check(), a.mul(&b).add(&a.mul(&c)).check());
+    }
+
+    #[test]
+    fn unverified_field_assign_ops() {
+        let (three, two) = (uf(3), uf(2));
+
+        let mut r = three;
+        r.add_assign(&two);
+        assert_eq!(r.check(), f(5));
+        let mut r = three;
+        r.sub_assign(&two);
+        assert_eq!(r.check(), f(1));
+        let mut r = three;
+        r.mul_assign(&two);
+        assert_eq!(r.check(), f(6));
+        let mut r = three;
+        r.neg_in_place();
+        assert_eq!(r.check(), f(4)); // -3 mod 7
+        let mut r = three;
+        r.square_in_place();
+        assert_eq!(r.check(), f(2)); // 9 mod 7
+    }
+
+    #[test]
+    fn unverified_field_check_and_raw() {
+        assert_eq!(uf(6).check(), f(6));
+        assert_eq!(*uf(3).check_ref(), f(3));
+        assert!(uf(3).check_is_eq(&uf(3)));
+        assert!(!uf(3).check_is_eq(&uf(5)));
+
+        assert!(uf(3).raw_eq(&uf(3)));
+        assert!(!uf(3).raw_eq(&uf(5)));
+        assert!(uf(0).raw_is_zero());
+        assert!(!uf(1).raw_is_zero());
+    }
+
+    #[test]
+    fn unverified_field_edge_cases() {
+        assert_eq!(uf(3).sub(&uf(3)).check(), f(0));
+        assert_eq!(uf(3).mul(&UF::ZERO).check(), f(0));
+        let mut z = UF::ZERO;
+        z.neg_in_place();
+        assert_eq!(z.check(), f(0));
+    }
+
+    #[test]
+    fn unverified_field_pow() {
+        let two = uf(2);
+        // 2³ = 8 = 1 mod 7
+        assert_eq!(two.pow(&BigInt::<1>::from_u32(3)).check(), f(1));
+        // Fermat: a^(p-1) = 1
+        assert_eq!(two.pow(&BigInt::<1>::from_u32(6)).check(), f(1));
+        // a^0 = 1
+        assert_eq!(two.pow(&BigInt::<1>::ZERO).check(), f(1));
+    }
+
+    #[test]
+    fn unverified_field_non_canonical_input() {
+        // 10 in limbs = 3 mod 7, not canonical
+        let three = uf(10);
+        let two = uf(2);
+
+        assert_eq!(three.add(&two).check(), f(5));
+        assert_eq!(three.mul(&two).check(), f(6));
+        assert_eq!(three.sub(&two).check(), f(1));
+    }
+
+    #[test]
+    fn prime_field_trait() {
+        assert_eq!(<F as PrimeField<8>>::MODULUS, BigInt::from_u32(7));
+        assert_eq!(<F as PrimeField<8>>::MODULUS_BIT_LEN, 3);
+        assert_eq!(PrimeField::to_bigint(f(5)), BigInt::from_u32(5));
+        assert_eq!(PrimeField::to_bigint(f(0)), BigInt::ZERO);
+    }
+}
