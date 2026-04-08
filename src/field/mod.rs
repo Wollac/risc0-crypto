@@ -440,7 +440,7 @@ impl<P: FieldConfig<N>, const N: usize> Field for Fp<P, N> {
 
     #[inline]
     fn into_unverified(self) -> UnverifiedFp<P, N> {
-        UnverifiedFp::from_bigint(self.inner)
+        self.into()
     }
 
     #[inline]

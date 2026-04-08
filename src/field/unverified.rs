@@ -71,6 +71,12 @@ impl<P, const N: usize> UnverifiedFp<P, N> {
     pub(crate) fn raw_eq(&self, other: &Self) -> bool {
         self.as_bigint() == other.as_bigint()
     }
+
+    /// Raw integer zero check. Only catches the canonical zero representation.
+    #[inline]
+    pub(crate) const fn raw_is_zero(&self) -> bool {
+        self.as_bigint().is_zero()
+    }
 }
 
 impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
@@ -321,7 +327,7 @@ impl<P: FieldConfig<N>, const N: usize> super::element::UnverifiedField for Unve
     }
     #[inline]
     fn raw_is_zero(&self) -> bool {
-        self.as_bigint().is_zero()
+        self.raw_is_zero()
     }
 }
 
