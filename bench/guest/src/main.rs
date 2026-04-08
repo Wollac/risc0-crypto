@@ -315,7 +315,7 @@ fn bls12_381_g1_add_risc0(a: G1Point, b: G1Point) -> Option<[u8; 96]> {
         if x.is_zero() && y.is_zero() {
             Some(bls12_381::Affine::IDENTITY)
         } else {
-            bls12_381::Affine::new(x, y)
+            bls12_381::Affine::new_in_subgroup(x, y)
         }
     };
 
@@ -451,10 +451,7 @@ fn read_g1_risc0(point: &G1Point) -> Option<risc0_crypto::curves::bls12_381::Aff
 /// Parse a 32-byte big-endian EIP scalar into a BLS12-381 scalar field element.
 fn read_scalar_risc0(scalar: &[u8; SCALAR_LENGTH]) -> risc0_crypto::curves::bls12_381::Fr {
     use risc0_crypto::curves::bls12_381;
-    // pad 32-byte EIP scalar to 48-byte BigInt<12>
-    let mut padded = [0u8; 48];
-    padded[16..].copy_from_slice(scalar);
-    bls12_381::Fr::reduce_from_bigint(BigInt::from_be_bytes(&padded))
+    bls12_381::Fr::reduce_from_bigint(BigInt::from_be_bytes(scalar))
 }
 
 /// Encode a BLS12-381 affine point as 96 big-endian bytes.
@@ -579,29 +576,29 @@ fn bench_eip2537_msm() {
 
 // -- field benchmarks --
 
-const FIELD_ITERS: u32 = 10;
+const BENCH_ITERS: u32 = 10;
 
 macro_rules! bench_field {
     ($name:expr, $Fq:ty, $val:expr) => {{
         let v: $Fq = $val;
 
-        env::log(&format!("cycle-start: {}/add*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
+        env::log(&format!("cycle-start: {}/add*{}", $name, BENCH_ITERS));
+        for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&v) + black_box(&v));
         }
-        env::log(&format!("cycle-end: {}/add*{}", $name, FIELD_ITERS));
+        env::log(&format!("cycle-end: {}/add*{}", $name, BENCH_ITERS));
 
-        env::log(&format!("cycle-start: {}/mul*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
+        env::log(&format!("cycle-start: {}/mul*{}", $name, BENCH_ITERS));
+        for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&v) * black_box(&v));
         }
-        env::log(&format!("cycle-end: {}/mul*{}", $name, FIELD_ITERS));
+        env::log(&format!("cycle-end: {}/mul*{}", $name, BENCH_ITERS));
 
-        env::log(&format!("cycle-start: {}/inverse*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
+        env::log(&format!("cycle-start: {}/inverse*{}", $name, BENCH_ITERS));
+        for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&v).inverse());
         }
-        env::log(&format!("cycle-end: {}/inverse*{}", $name, FIELD_ITERS));
+        env::log(&format!("cycle-end: {}/inverse*{}", $name, BENCH_ITERS));
     }};
 }
 
@@ -631,25 +628,24 @@ macro_rules! bench_ec {
         let g = <$Affine>::GENERATOR;
         let scalar: $Fr = $scalar;
 
-        env::log(&format!("cycle-start: {}/is_on_curve*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
+        env::log(&format!("cycle-start: {}/is_on_curve*{}", $name, BENCH_ITERS));
+        for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&g).is_on_curve());
         }
-        env::log(&format!("cycle-end: {}/is_on_curve*{}", $name, FIELD_ITERS));
+        env::log(&format!("cycle-end: {}/is_on_curve*{}", $name, BENCH_ITERS));
 
-        env::log(&format!("cycle-start: {}/point_double*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
+        env::log(&format!("cycle-start: {}/point_double*{}", $name, BENCH_ITERS));
+        for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&g).double());
         }
-        env::log(&format!("cycle-end: {}/point_double*{}", $name, FIELD_ITERS));
+        env::log(&format!("cycle-end: {}/point_double*{}", $name, BENCH_ITERS));
 
-        // precompute a second distinct point (not timed)
-        let p2 = <$Affine>::GENERATOR;
-        env::log(&format!("cycle-start: {}/point_add*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
+        let p2 = <$Affine>::GENERATOR.double();
+        env::log(&format!("cycle-start: {}/point_add*{}", $name, BENCH_ITERS));
+        for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&g) + black_box(&p2));
         }
-        env::log(&format!("cycle-end: {}/point_add*{}", $name, FIELD_ITERS));
+        env::log(&format!("cycle-end: {}/point_add*{}", $name, BENCH_ITERS));
 
         env::log(&format!("cycle-start: {}/scalar_mul", $name));
         let _ = black_box(black_box(&g) * black_box(&scalar));
@@ -682,6 +678,7 @@ macro_rules! bench_ecdsa {
         let ok = sig.verify(black_box(&pubkey), black_box(hash));
         black_box(ok);
         env::log(&format!("cycle-end: {}/ecdsa_verify", $name));
+        assert!(ok, "ecdsa_verify failed");
 
         env::log(&format!("cycle-start: {}/ecdsa_recover", $name));
         let recovered = sig.recover(black_box(hash)).unwrap();
