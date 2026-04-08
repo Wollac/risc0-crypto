@@ -128,7 +128,6 @@ trait CurveParams<const N: usize> {
 impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize> CurveParams<N>
     for C
 {
-    // COEFF_A/B are Fp<P, N> so .to_bigint() is the const inherent method, not the trait method.
     const CURVE_PARAMS: [BigInt<N>; 3] =
         [P::MODULUS, C::COEFF_A.to_bigint(), C::COEFF_B.to_bigint()];
 }

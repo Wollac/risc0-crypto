@@ -148,20 +148,10 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
         P::Ops::inv(self)
     }
 
-    /// Computes `self^exp mod p` via square-and-multiply.
+    /// Computes `self^exp mod p` via square-and-multiply. Delegates to
+    /// [`UnverifiedField::pow`](super::UnverifiedField::pow).
     pub fn pow(&self, exp: &(impl BitAccess + ?Sized)) -> Self {
-        let n = exp.bits();
-        if n == 0 {
-            return Fp::ONE.into();
-        }
-        let mut acc = *self;
-        for i in (0..n - 1).rev() {
-            acc.square_in_place();
-            if exp.bit(i) {
-                acc.mul_assign(self);
-            }
-        }
-        acc
+        super::UnverifiedField::pow(self, exp)
     }
 
     /// Computes a square root mod p via `self^((p+1)/4)`. Returns `None` if `self` is not a

@@ -282,14 +282,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
             return true; // identity is on every curve
         };
 
-        // rhs = x³ + ax + b = (x² + a) * x + b
-        let lhs = y.mul(y);
-        let mut rhs = x.mul(x);
-        Self::add_a(&mut rhs);
-        rhs.mul_assign(x);
-        rhs.add_assign(&C::COEFF_B.into_unverified());
-
-        lhs.check_is_eq(&rhs)
+        y.mul(y).check_is_eq(&Self::curve_rhs(x))
     }
 
     /// Returns `true` if this point is in the prime-order subgroup.
@@ -314,8 +307,17 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     #[inline(always)]
     fn add_a(val: &mut UnverifiedBaseField<C, N>) {
         if !C::COEFF_A.is_zero() {
-            val.add_assign(&C::COEFF_A.into_unverified());
+            val.add_assign(C::COEFF_A.as_unverified());
         }
+    }
+
+    /// Computes the curve RHS `x³ + ax + b` for a given x-coordinate.
+    fn curve_rhs(x: &UnverifiedBaseField<C, N>) -> UnverifiedBaseField<C, N> {
+        let mut rhs = x.mul(x);
+        Self::add_a(&mut rhs);
+        rhs.mul_assign(x);
+        rhs.add_assign(C::COEFF_B.as_unverified());
+        rhs
     }
 
     /// Computes `[2]src` and writes the result into `self`.
@@ -486,12 +488,7 @@ impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>
     pub fn ys_from_x(x: impl AsRef<UnverifiedFp<P, N>>) -> Option<(Fp<P, N>, Fp<P, N>)> {
         // y² = x³ + ax + b
         let x = x.as_ref();
-        let mut rhs = x * x;
-        Self::add_a(&mut rhs);
-        rhs *= x;
-        rhs += &C::COEFF_B;
-
-        let y = rhs.sqrt()?.check();
+        let y = Self::curve_rhs(x).sqrt()?.check();
         let neg_y = -&y;
         if y.as_bigint().is_even() { Some((y, neg_y)) } else { Some((neg_y, y)) }
     }
