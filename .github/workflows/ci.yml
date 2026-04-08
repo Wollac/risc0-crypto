@@ -122,12 +122,9 @@ jobs:
 
       - name: Run benchmarks
         run: >
-          cargo run --release
+          cargo run --release --locked
           --manifest-path bench/Cargo.toml
           -- --json bench-results.json
-
-      - name: Clean working tree
-        run: git checkout -- .
 
       - name: Track benchmark results
         uses: benchmark-action/github-action-benchmark@v1
