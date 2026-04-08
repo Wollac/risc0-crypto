@@ -118,6 +118,7 @@ jobs:
           export PATH="$HOME/.risc0/bin:$PATH"
           rzup install rust
           rzup install cpp
+          rzup install r0vm
 
       - name: Run benchmarks
         run: >
