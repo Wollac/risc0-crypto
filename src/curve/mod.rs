@@ -282,13 +282,12 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
             return true; // identity is on every curve
         };
 
-        // inline rather than calling curve_rhs() - the function return copies BigInt<N> which
-        // costs ~37 cycles (256-bit) / ~195 cycles (384-bit) on R0VM
+        let lhs = y.mul(y);
         let mut rhs = x.mul(x);
         Self::add_a(&mut rhs);
         rhs.mul_assign(x);
         rhs.add_assign(C::COEFF_B.as_unverified());
-        y.mul(y).check_is_eq(&rhs)
+        lhs.check_is_eq(&rhs)
     }
 
     /// Returns `true` if this point is in the prime-order subgroup.
