@@ -428,22 +428,22 @@ impl<P: FieldConfig<N>, const N: usize> Field for Fp<P, N> {
     const ZERO: Self = P::ZERO;
     const ONE: Self = P::ONE;
 
-    #[inline]
+    #[inline(always)]
     fn is_zero(&self) -> bool {
         self.is_zero()
     }
 
-    #[inline]
+    #[inline(always)]
     fn as_unverified(&self) -> &UnverifiedFp<P, N> {
         self.as_unverified()
     }
 
-    #[inline]
+    #[inline(always)]
     fn into_unverified(self) -> UnverifiedFp<P, N> {
         self.into()
     }
 
-    #[inline]
+    #[inline(always)]
     fn neg(&self) -> Self {
         -self
     }

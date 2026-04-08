@@ -273,39 +273,39 @@ impl<P: FieldConfig<N>, const N: usize> super::element::UnverifiedField for Unve
 
     const ZERO: Self = Self::from_bigint(BigInt::ZERO);
 
-    #[inline]
+    #[inline(always)]
     fn add(&self, other: &Self) -> Self {
         P::Ops::add(self, other)
     }
-    #[inline]
+    #[inline(always)]
     fn sub(&self, other: &Self) -> Self {
         P::Ops::sub(self, other)
     }
-    #[inline]
+    #[inline(always)]
     fn mul(&self, other: &Self) -> Self {
         P::Ops::mul(self, other)
     }
-    #[inline]
+    #[inline(always)]
     fn add_assign(&mut self, other: &Self) {
         P::Ops::add_assign(self, other);
     }
-    #[inline]
+    #[inline(always)]
     fn sub_assign(&mut self, other: &Self) {
         P::Ops::sub_assign(self, other);
     }
-    #[inline]
+    #[inline(always)]
     fn mul_assign(&mut self, other: &Self) {
         P::Ops::mul_assign(self, other);
     }
-    #[inline]
+    #[inline(always)]
     fn neg_in_place(&mut self) {
         P::Ops::neg_in_place(self);
     }
-    #[inline]
+    #[inline(always)]
     fn square_in_place(&mut self) {
         P::Ops::square_in_place(self);
     }
-    #[inline]
+    #[inline(always)]
     fn inverse(&self) -> Self {
         P::Ops::inv(self)
     }

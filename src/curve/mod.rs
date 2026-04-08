@@ -312,6 +312,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     }
 
     /// Computes the curve RHS `x³ + ax + b` for a given x-coordinate.
+    #[inline]
     fn curve_rhs(x: &UnverifiedBaseField<C, N>) -> UnverifiedBaseField<C, N> {
         let mut rhs = x.mul(x);
         Self::add_a(&mut rhs);
