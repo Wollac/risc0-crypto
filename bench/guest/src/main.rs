@@ -315,7 +315,7 @@ fn bls12_381_g1_add_risc0(a: G1Point, b: G1Point) -> Option<[u8; 96]> {
         if x.is_zero() && y.is_zero() {
             Some(bls12_381::Affine::IDENTITY)
         } else {
-            bls12_381::Affine::new_in_subgroup(x, y)
+            bls12_381::Affine::new(x, y)
         }
     };
 
