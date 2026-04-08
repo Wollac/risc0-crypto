@@ -631,6 +631,12 @@ macro_rules! bench_ec {
         let g = <$Affine>::GENERATOR;
         let scalar: $Fr = $scalar;
 
+        env::log(&format!("cycle-start: {}/is_on_curve*{}", $name, FIELD_ITERS));
+        for _ in 0..FIELD_ITERS {
+            let _ = black_box(black_box(&g).is_on_curve());
+        }
+        env::log(&format!("cycle-end: {}/is_on_curve*{}", $name, FIELD_ITERS));
+
         env::log(&format!("cycle-start: {}/point_double*{}", $name, FIELD_ITERS));
         for _ in 0..FIELD_ITERS {
             let _ = black_box(black_box(&g).double());
