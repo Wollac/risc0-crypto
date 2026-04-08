@@ -71,6 +71,12 @@ impl<P, const N: usize> UnverifiedFp<P, N> {
     pub(crate) fn raw_eq(&self, other: &Self) -> bool {
         self.as_bigint() == other.as_bigint()
     }
+
+    /// Raw integer zero check. Only catches the canonical zero representation.
+    #[inline]
+    pub(crate) const fn raw_is_zero(&self) -> bool {
+        self.as_bigint().is_zero()
+    }
 }
 
 impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
@@ -148,20 +154,10 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
         P::Ops::inv(self)
     }
 
-    /// Computes `self^exp mod p` via square-and-multiply.
+    /// Computes `self^exp mod p` via square-and-multiply. Delegates to
+    /// [`UnverifiedField::pow`](super::UnverifiedField::pow).
     pub fn pow(&self, exp: &(impl BitAccess + ?Sized)) -> Self {
-        let n = exp.bits();
-        if n == 0 {
-            return Fp::ONE.into();
-        }
-        let mut acc = *self;
-        for i in (0..n - 1).rev() {
-            acc.square_in_place();
-            if exp.bit(i) {
-                acc.mul_assign(self);
-            }
-        }
-        acc
+        super::UnverifiedField::pow(self, exp)
     }
 
     /// Computes a square root mod p via `self^((p+1)/4)`. Returns `None` if `self` is not a
@@ -267,6 +263,71 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<Self>> MulAssign<&T> for Unveri
     #[inline]
     fn mul_assign(&mut self, rhs: &T) {
         P::Ops::mul_assign(self, rhs.as_ref());
+    }
+}
+
+// --- UnverifiedField trait impl ---
+
+impl<P: FieldConfig<N>, const N: usize> super::element::UnverifiedField for UnverifiedFp<P, N> {
+    type Verified = Fp<P, N>;
+
+    const ZERO: Self = Self::from_bigint(BigInt::ZERO);
+
+    #[inline(always)]
+    fn add(&self, other: &Self) -> Self {
+        P::Ops::add(self, other)
+    }
+    #[inline(always)]
+    fn sub(&self, other: &Self) -> Self {
+        P::Ops::sub(self, other)
+    }
+    #[inline(always)]
+    fn mul(&self, other: &Self) -> Self {
+        P::Ops::mul(self, other)
+    }
+    #[inline(always)]
+    fn add_assign(&mut self, other: &Self) {
+        P::Ops::add_assign(self, other);
+    }
+    #[inline(always)]
+    fn sub_assign(&mut self, other: &Self) {
+        P::Ops::sub_assign(self, other);
+    }
+    #[inline(always)]
+    fn mul_assign(&mut self, other: &Self) {
+        P::Ops::mul_assign(self, other);
+    }
+    #[inline(always)]
+    fn neg_in_place(&mut self) {
+        P::Ops::neg_in_place(self);
+    }
+    #[inline(always)]
+    fn square_in_place(&mut self) {
+        P::Ops::square_in_place(self);
+    }
+    #[inline(always)]
+    fn inverse(&self) -> Self {
+        P::Ops::inv(self)
+    }
+    #[inline(always)]
+    fn check(self) -> Fp<P, N> {
+        self.check()
+    }
+    #[inline(always)]
+    fn check_ref(&self) -> &Fp<P, N> {
+        self.check_ref()
+    }
+    #[inline]
+    fn check_is_eq(&self, other: &Self) -> bool {
+        self.check_is_eq(other)
+    }
+    #[inline]
+    fn raw_eq(&self, other: &Self) -> bool {
+        self.raw_eq(other)
+    }
+    #[inline]
+    fn raw_is_zero(&self) -> bool {
+        self.raw_is_zero()
     }
 }
 

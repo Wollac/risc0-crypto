@@ -41,6 +41,16 @@ macro_rules! fp {
     };
 }
 
+/// Creates an [`UnverifiedFp`] from a hex string literal. The value is NOT range-checked against
+/// the modulus (consistent with `UnverifiedFp` semantics). Use `curve_sanity_tests!()` to
+/// validate generators at test time.
+#[macro_export]
+macro_rules! ufp {
+    ($hex:literal) => {
+        $crate::UnverifiedFp::from_bigint($crate::bigint!($hex))
+    };
+}
+
 /// Number of `u32` limbs for a 256-bit value.
 pub const LIMBS_256: usize = 8;
 /// Number of `u32` limbs for a 384-bit value.
@@ -48,5 +58,8 @@ pub const LIMBS_384: usize = 12;
 
 pub use bigint::BigInt;
 pub use curve::{AffinePoint, Coords, CurveConfig, CurveOps, R0VMCurveOps};
-pub use field::{FieldConfig, FieldOps, Fp, Fp256, Fp384, R0VMFieldOps, UnverifiedFp};
+pub use field::{
+    Field, FieldConfig, FieldOps, Fp, Fp256, Fp384, PrimeField, R0VMFieldOps, UnverifiedField,
+    UnverifiedFp,
+};
 pub use modexp::{BitAccess, ModMul, modexp};

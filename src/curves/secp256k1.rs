@@ -7,7 +7,7 @@
 
 use crate::{
     AffinePoint, BigInt, CurveConfig, FieldConfig, Fp, LIMBS_256, R0VMCurveOps, R0VMFieldOps,
-    bigint, fp,
+    bigint, fp, ufp,
 };
 
 // --- Base field (Fq): coordinates, modulus = p ---
@@ -39,7 +39,7 @@ pub type Fr = Fp<FrConfig, LIMBS_256>;
 pub enum Config {}
 
 impl CurveConfig<LIMBS_256> for Config {
-    type BaseFieldConfig = FqConfig;
+    type BaseField = Fq;
     type ScalarFieldConfig = FrConfig;
     type Ops = R0VMCurveOps;
 
@@ -47,10 +47,10 @@ impl CurveConfig<LIMBS_256> for Config {
     const COEFF_A: Fq = Fq::ZERO;
     const COEFF_B: Fq = fp!("0x7");
 
-    const GENERATOR: Affine = AffinePoint::from_xy(
-        fp!("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
-        fp!("0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"),
-    );
+    const GENERATOR: Affine = AffinePoint::from_raw_coords([
+        ufp!("0x79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798"),
+        ufp!("0x483ada7726a3c4655da4fbfc0e1108a8fd17b448a68554199c47d08ffb10d4b8"),
+    ]);
     const COFACTOR: &'static [u32] = &[1];
 }
 
