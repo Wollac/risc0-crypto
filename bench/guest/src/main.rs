@@ -560,15 +560,21 @@ fn bench_eip2537_msm() {
     let pairs = eip2537_msm_setup();
 
     for &k in &[1, 128] {
-        env::log(&format!("cycle-start: eip2537/msm/{k}/risc0-crypto"));
+        // pre-format markers to avoid format!() allocation noise inside timed regions
+        let risc0_s = format!("cycle-start: eip2537/msm/{k}/risc0-crypto");
+        let risc0_e = format!("cycle-end: eip2537/msm/{k}/risc0-crypto");
+        let blst_s = format!("cycle-start: eip2537/msm/{k}/blst");
+        let blst_e = format!("cycle-end: eip2537/msm/{k}/blst");
+
+        env::log(&risc0_s);
         let r1 = bls12_381_g1_msm_risc0(black_box(&pairs[..k]));
         black_box(&r1);
-        env::log(&format!("cycle-end: eip2537/msm/{k}/risc0-crypto"));
+        env::log(&risc0_e);
 
-        env::log(&format!("cycle-start: eip2537/msm/{k}/blst"));
+        env::log(&blst_s);
         let r2 = bls12_381_g1_msm_blst(black_box(&pairs[..k]));
         black_box(&r2);
-        env::log(&format!("cycle-end: eip2537/msm/{k}/blst"));
+        env::log(&blst_e);
 
         assert_eq!(r1.unwrap(), r2.unwrap(), "G1 MSM k={k} implementations disagree");
     }
@@ -582,23 +588,31 @@ macro_rules! bench_field {
     ($name:expr, $Fq:ty, $val:expr) => {{
         let v: $Fq = $val;
 
-        env::log(&format!("cycle-start: {}/add*{}", $name, BENCH_ITERS));
+        // pre-format markers to avoid format!() allocation noise inside timed regions
+        let add_start = format!("cycle-start: {}/add*{}", $name, BENCH_ITERS);
+        let add_end = format!("cycle-end: {}/add*{}", $name, BENCH_ITERS);
+        let mul_start = format!("cycle-start: {}/mul*{}", $name, BENCH_ITERS);
+        let mul_end = format!("cycle-end: {}/mul*{}", $name, BENCH_ITERS);
+        let inv_start = format!("cycle-start: {}/inverse*{}", $name, BENCH_ITERS);
+        let inv_end = format!("cycle-end: {}/inverse*{}", $name, BENCH_ITERS);
+
+        env::log(&add_start);
         for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&v) + black_box(&v));
         }
-        env::log(&format!("cycle-end: {}/add*{}", $name, BENCH_ITERS));
+        env::log(&add_end);
 
-        env::log(&format!("cycle-start: {}/mul*{}", $name, BENCH_ITERS));
+        env::log(&mul_start);
         for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&v) * black_box(&v));
         }
-        env::log(&format!("cycle-end: {}/mul*{}", $name, BENCH_ITERS));
+        env::log(&mul_end);
 
-        env::log(&format!("cycle-start: {}/inverse*{}", $name, BENCH_ITERS));
+        env::log(&inv_start);
         for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&v).inverse());
         }
-        env::log(&format!("cycle-end: {}/inverse*{}", $name, BENCH_ITERS));
+        env::log(&inv_end);
     }};
 }
 
@@ -627,29 +641,39 @@ macro_rules! bench_ec {
     ($name:expr, $Affine:ty, $Fr:ty, $scalar:expr) => {{
         let g = <$Affine>::GENERATOR;
         let scalar: $Fr = $scalar;
+        let p2 = <$Affine>::GENERATOR.double();
 
-        env::log(&format!("cycle-start: {}/is_on_curve*{}", $name, BENCH_ITERS));
+        // pre-format markers to avoid format!() allocation noise inside timed regions
+        let ioc_s = format!("cycle-start: {}/is_on_curve*{}", $name, BENCH_ITERS);
+        let ioc_e = format!("cycle-end: {}/is_on_curve*{}", $name, BENCH_ITERS);
+        let dbl_s = format!("cycle-start: {}/point_double*{}", $name, BENCH_ITERS);
+        let dbl_e = format!("cycle-end: {}/point_double*{}", $name, BENCH_ITERS);
+        let add_s = format!("cycle-start: {}/point_add*{}", $name, BENCH_ITERS);
+        let add_e = format!("cycle-end: {}/point_add*{}", $name, BENCH_ITERS);
+        let mul_s = format!("cycle-start: {}/scalar_mul", $name);
+        let mul_e = format!("cycle-end: {}/scalar_mul", $name);
+
+        env::log(&ioc_s);
         for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&g).is_on_curve());
         }
-        env::log(&format!("cycle-end: {}/is_on_curve*{}", $name, BENCH_ITERS));
+        env::log(&ioc_e);
 
-        env::log(&format!("cycle-start: {}/point_double*{}", $name, BENCH_ITERS));
+        env::log(&dbl_s);
         for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&g).double());
         }
-        env::log(&format!("cycle-end: {}/point_double*{}", $name, BENCH_ITERS));
+        env::log(&dbl_e);
 
-        let p2 = <$Affine>::GENERATOR.double();
-        env::log(&format!("cycle-start: {}/point_add*{}", $name, BENCH_ITERS));
+        env::log(&add_s);
         for _ in 0..BENCH_ITERS {
             let _ = black_box(black_box(&g) + black_box(&p2));
         }
-        env::log(&format!("cycle-end: {}/point_add*{}", $name, BENCH_ITERS));
+        env::log(&add_e);
 
-        env::log(&format!("cycle-start: {}/scalar_mul", $name));
+        env::log(&mul_s);
         let _ = black_box(black_box(&g) * black_box(&scalar));
-        env::log(&format!("cycle-end: {}/scalar_mul", $name));
+        env::log(&mul_e);
     }};
 }
 
@@ -661,7 +685,15 @@ macro_rules! bench_ecdsa {
         // precompute pubkey (not timed)
         let pubkey = &<$Affine>::GENERATOR * &d;
 
-        env::log(&format!("cycle-start: {}/ecdsa_sign", $name));
+        // pre-format markers to avoid format!() allocation noise inside timed regions
+        let sign_s = format!("cycle-start: {}/ecdsa_sign", $name);
+        let sign_e = format!("cycle-end: {}/ecdsa_sign", $name);
+        let verify_s = format!("cycle-start: {}/ecdsa_verify", $name);
+        let verify_e = format!("cycle-end: {}/ecdsa_verify", $name);
+        let recover_s = format!("cycle-start: {}/ecdsa_recover", $name);
+        let recover_e = format!("cycle-end: {}/ecdsa_recover", $name);
+
+        env::log(&sign_s);
         let sig = risc0_crypto::ecdsa::Signature::<$Config, $N>::sign(
             black_box(&d),
             black_box(&k),
@@ -669,21 +701,21 @@ macro_rules! bench_ecdsa {
         )
         .unwrap();
         black_box(&sig);
-        env::log(&format!("cycle-end: {}/ecdsa_sign", $name));
+        env::log(&sign_e);
 
         let sig =
             risc0_crypto::ecdsa::RecoverableSignature::<$Config, $N>::sign(&d, &k, hash).unwrap();
 
-        env::log(&format!("cycle-start: {}/ecdsa_verify", $name));
+        env::log(&verify_s);
         let ok = sig.verify(black_box(&pubkey), black_box(hash));
         black_box(ok);
-        env::log(&format!("cycle-end: {}/ecdsa_verify", $name));
+        env::log(&verify_e);
         assert!(ok, "ecdsa_verify failed");
 
-        env::log(&format!("cycle-start: {}/ecdsa_recover", $name));
+        env::log(&recover_s);
         let recovered = sig.recover(black_box(hash)).unwrap();
         black_box(&recovered);
-        env::log(&format!("cycle-end: {}/ecdsa_recover", $name));
+        env::log(&recover_e);
     }};
 }
 
