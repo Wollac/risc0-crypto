@@ -591,27 +591,11 @@ macro_rules! bench_field {
         }
         env::log(&format!("cycle-end: {}/add*{}", $name, FIELD_ITERS));
 
-        let mut tmp = <$Fq>::ZERO;
-        env::log(&format!("cycle-start: {}/add_assign*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
-            tmp += black_box(&v);
-        }
-        black_box(&tmp);
-        env::log(&format!("cycle-end: {}/add_assign*{}", $name, FIELD_ITERS));
-
         env::log(&format!("cycle-start: {}/mul*{}", $name, FIELD_ITERS));
         for _ in 0..FIELD_ITERS {
             let _ = black_box(black_box(&v) * black_box(&v));
         }
         env::log(&format!("cycle-end: {}/mul*{}", $name, FIELD_ITERS));
-
-        let mut tmp = <$Fq>::ONE;
-        env::log(&format!("cycle-start: {}/mul_assign*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
-            tmp *= black_box(&v);
-        }
-        black_box(&tmp);
-        env::log(&format!("cycle-end: {}/mul_assign*{}", $name, FIELD_ITERS));
 
         env::log(&format!("cycle-start: {}/inverse*{}", $name, FIELD_ITERS));
         for _ in 0..FIELD_ITERS {
@@ -647,12 +631,6 @@ macro_rules! bench_ec {
         let g = <$Affine>::GENERATOR;
         let scalar: $Fr = $scalar;
 
-        env::log(&format!("cycle-start: {}/is_on_curve*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
-            let _ = black_box(black_box(&g).is_on_curve());
-        }
-        env::log(&format!("cycle-end: {}/is_on_curve*{}", $name, FIELD_ITERS));
-
         env::log(&format!("cycle-start: {}/point_double*{}", $name, FIELD_ITERS));
         for _ in 0..FIELD_ITERS {
             let _ = black_box(black_box(&g).double());
@@ -666,14 +644,6 @@ macro_rules! bench_ec {
             let _ = black_box(black_box(&g) + black_box(&p2));
         }
         env::log(&format!("cycle-end: {}/point_add*{}", $name, FIELD_ITERS));
-
-        let mut tmp = <$Affine>::GENERATOR;
-        env::log(&format!("cycle-start: {}/point_add_assign*{}", $name, FIELD_ITERS));
-        for _ in 0..FIELD_ITERS {
-            tmp += black_box(&g);
-        }
-        black_box(&tmp);
-        env::log(&format!("cycle-end: {}/point_add_assign*{}", $name, FIELD_ITERS));
 
         env::log(&format!("cycle-start: {}/scalar_mul", $name));
         let _ = black_box(black_box(&g) * black_box(&scalar));
@@ -699,15 +669,8 @@ macro_rules! bench_ecdsa {
         black_box(&sig);
         env::log(&format!("cycle-end: {}/ecdsa_sign", $name));
 
-        env::log(&format!("cycle-start: {}/ecdsa_rsign", $name));
-        let sig = risc0_crypto::ecdsa::RecoverableSignature::<$Config, $N>::sign(
-            black_box(&d),
-            black_box(&k),
-            black_box(hash),
-        )
-        .unwrap();
-        black_box(&sig);
-        env::log(&format!("cycle-end: {}/ecdsa_rsign", $name));
+        let sig =
+            risc0_crypto::ecdsa::RecoverableSignature::<$Config, $N>::sign(&d, &k, hash).unwrap();
 
         env::log(&format!("cycle-start: {}/ecdsa_verify", $name));
         let ok = sig.verify(black_box(&pubkey), black_box(hash));
