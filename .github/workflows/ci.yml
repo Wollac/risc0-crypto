@@ -110,14 +110,14 @@ jobs:
           workspaces: bench
 
       - name: Install rzup
-        run: curl -L https://risczero.com/install | bash
+        run: |
+          curl -L https://risczero.com/install | bash
+          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
 
       - name: Install risc0 toolchain
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "$HOME/.risc0/bin" >> "$GITHUB_PATH"
-          export PATH="$HOME/.risc0/bin:$PATH"
           rzup install rust
           rzup install cpp
           rzup install r0vm
