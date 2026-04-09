@@ -427,12 +427,6 @@ macro_rules! bench_ec {
         }
         env::log(&format!("cycle-end: {}/is_on_curve*{}", $name, BENCH_ITERS));
 
-        env::log(&format!("cycle-start: {}/point_double*{}", $name, BENCH_ITERS));
-        for _ in 0..BENCH_ITERS {
-            let _ = black_box(black_box(&g).double());
-        }
-        env::log(&format!("cycle-end: {}/point_double*{}", $name, BENCH_ITERS));
-
         let p2 = <$Affine>::GENERATOR.double();
         env::log(&format!("cycle-start: {}/point_add*{}", $name, BENCH_ITERS));
         for _ in 0..BENCH_ITERS {
@@ -545,9 +539,4 @@ fn bench_modexp() {
     let _ = black_box(modexp(&base_4096, &exp_e, &mod_4096));
     env::log("cycle-end: modexp/4096bit_e65537");
 
-    // RSA sign: full 4096-bit private exponent d (realistic density)
-    let exp_4096: BigInt<128> = BigInt([0xaaaaaaaa; 128]);
-    env::log("cycle-start: modexp/4096bit_full");
-    let _ = black_box(modexp(&base_4096, &exp_4096, &mod_4096));
-    env::log("cycle-end: modexp/4096bit_full");
 }
