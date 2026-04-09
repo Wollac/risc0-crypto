@@ -135,8 +135,9 @@ jobs:
           tool: customSmallerIsBetter
           output-file-path: bench-results.json
           github-token: ${{ secrets.GITHUB_TOKEN }}
-          auto-push: true
+          auto-push: ${{ github.ref == 'refs/heads/main' }}
           alert-threshold: "101%"
           fail-on-alert: true
           comment-on-alert: true
+          comment-always: ${{ github.event_name == 'pull_request' }}
           summary-always: true
