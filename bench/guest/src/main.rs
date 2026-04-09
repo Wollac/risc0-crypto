@@ -27,9 +27,9 @@ fn main() {
     bench_modexp();
 }
 
-// -- ecrecover comparison: risc0-crypto vs k256 --
+// -- ecrecover (secp256k1) --
 //
-// both implementations use the revm-precompile Crypto interface:
+// uses the revm-precompile Crypto interface:
 //   fn secp256k1_ecrecover(sig: &[u8; 64], recid: u8, msg: &[u8; 32])
 //
 // the timed region includes all parsing from raw bytes.
@@ -81,37 +81,20 @@ fn ecrecover_risc0(sig: &[u8; 64], recid: u8, msg: &[u8; 32]) -> Option<[u8; 64]
     Some(result)
 }
 
-/// secp256k1 ecrecover via k256 (revm-precompile interface).
-fn ecrecover_k256(sig: &[u8; 64], recid: u8, msg: &[u8; 32]) -> Option<[u8; 64]> {
-    let sig = k256::ecdsa::Signature::from_slice(sig).ok()?;
-    let recid = k256::ecdsa::RecoveryId::try_from(recid).ok()?;
-    let key = k256::ecdsa::VerifyingKey::recover_from_prehash(msg.as_slice(), &sig, recid).ok()?;
-    let point = key.to_encoded_point(false);
-    let mut result = [0u8; 64];
-    result.copy_from_slice(&point.as_bytes()[1..65]);
-    Some(result)
-}
-
 fn bench_ecrecover() {
     let (sig, recid, msg) = ecrecover_setup();
 
-    env::log("cycle-start: ecrecover/risc0-crypto");
-    let a = ecrecover_risc0(black_box(&sig), black_box(recid), black_box(&msg));
-    black_box(&a);
-    env::log("cycle-end: ecrecover/risc0-crypto");
+    env::log("cycle-start: ecrecover");
+    let r = ecrecover_risc0(black_box(&sig), black_box(recid), black_box(&msg));
+    black_box(&r);
+    env::log("cycle-end: ecrecover");
 
-    env::log("cycle-start: ecrecover/k256");
-    let b = ecrecover_k256(black_box(&sig), black_box(recid), black_box(&msg));
-    black_box(&b);
-    env::log("cycle-end: ecrecover/k256");
-
-    // sanity: both recover the same public key
-    assert_eq!(a.unwrap(), b.unwrap(), "ecrecover implementations disagree");
+    assert!(r.is_some(), "ecrecover failed");
 }
 
-// -- EIP-196 (BN254 G1 add & mul) comparison: risc0-crypto vs substrate-bn --
+// -- EIP-196 (BN254 G1 add & mul) --
 //
-// both implementations use the revm-precompile Crypto interface:
+// uses the revm-precompile Crypto interface:
 //   fn bn254_g1_add(p1: &[u8], p2: &[u8]) -> Option<[u8; 64]>
 //   fn bn254_g1_mul(point: &[u8], scalar: &[u8]) -> Option<[u8; 64]>
 //
@@ -143,7 +126,7 @@ fn eip196_setup() -> ([u8; 64], [u8; 64], [u8; 32]) {
 }
 
 /// BN254 G1 point addition via risc0-crypto (revm-precompile interface).
-fn bn254_g1_add_risc0(p1: &[u8], p2: &[u8]) -> Option<[u8; 64]> {
+fn bn254_g1_add(p1: &[u8], p2: &[u8]) -> Option<[u8; 64]> {
     use risc0_crypto::curves::bn254;
 
     let read = |data: &[u8]| -> Option<bn254::Affine> {
@@ -169,7 +152,7 @@ fn bn254_g1_add_risc0(p1: &[u8], p2: &[u8]) -> Option<[u8; 64]> {
 }
 
 /// BN254 G1 scalar multiplication via risc0-crypto (revm-precompile interface).
-fn bn254_g1_mul_risc0(point: &[u8], scalar: &[u8]) -> Option<[u8; 64]> {
+fn bn254_g1_mul(point: &[u8], scalar: &[u8]) -> Option<[u8; 64]> {
     use risc0_crypto::curves::bn254;
 
     let x = bn254::Fq::from_bigint(BigInt::from_be_bytes(&point[..32]))?;
@@ -192,97 +175,34 @@ fn bn254_g1_mul_risc0(point: &[u8], scalar: &[u8]) -> Option<[u8; 64]> {
     Some(result)
 }
 
-/// BN254 G1 point addition via substrate-bn (revm-precompile interface).
-fn bn254_g1_add_substrate(p1: &[u8], p2: &[u8]) -> Option<[u8; 64]> {
-    use substrate_bn::{AffineG1, Fq, G1, Group};
-
-    let read = |data: &[u8]| -> Option<G1> {
-        let px = Fq::from_slice(&data[..32]).ok()?;
-        let py = Fq::from_slice(&data[32..64]).ok()?;
-        if px == Fq::zero() && py == Fq::zero() {
-            Some(G1::zero())
-        } else {
-            Some(AffineG1::new(px, py).ok()?.into())
-        }
-    };
-
-    let p1 = read(p1)?;
-    let p2 = read(p2)?;
-    let sum = p1 + p2;
-
-    let mut result = [0u8; 64];
-    if !sum.is_zero() {
-        let p = AffineG1::from_jacobian(sum)?;
-        p.x().to_big_endian(&mut result[..32]).unwrap();
-        p.y().to_big_endian(&mut result[32..]).unwrap();
-    }
-    Some(result)
-}
-
-/// BN254 G1 scalar multiplication via substrate-bn (revm-precompile interface).
-fn bn254_g1_mul_substrate(point: &[u8], scalar: &[u8]) -> Option<[u8; 64]> {
-    use substrate_bn::{AffineG1, Fq, Fr, G1, Group};
-
-    let px = Fq::from_slice(&point[..32]).ok()?;
-    let py = Fq::from_slice(&point[32..64]).ok()?;
-    let p: G1 = if px == Fq::zero() && py == Fq::zero() {
-        G1::zero()
-    } else {
-        AffineG1::new(px, py).ok()?.into()
-    };
-
-    let s = Fr::from_slice(scalar).ok()?;
-    let product = p * s;
-
-    let mut result = [0u8; 64];
-    if !product.is_zero() {
-        let p = AffineG1::from_jacobian(product)?;
-        p.x().to_big_endian(&mut result[..32]).unwrap();
-        p.y().to_big_endian(&mut result[32..]).unwrap();
-    }
-    Some(result)
-}
-
 fn bench_eip196() {
     let (p1, p2, scalar) = eip196_setup();
 
-    // -- G1 add --
-    env::log("cycle-start: eip196/add/risc0-crypto");
-    let a = bn254_g1_add_risc0(black_box(&p1), black_box(&p2));
-    black_box(&a);
-    env::log("cycle-end: eip196/add/risc0-crypto");
+    env::log("cycle-start: eip196/add");
+    let r = bn254_g1_add(black_box(&p1), black_box(&p2));
+    black_box(&r);
+    env::log("cycle-end: eip196/add");
+    assert!(r.is_some(), "eip196 add failed");
 
-    env::log("cycle-start: eip196/add/substrate-bn");
-    let b = bn254_g1_add_substrate(black_box(&p1), black_box(&p2));
-    black_box(&b);
-    env::log("cycle-end: eip196/add/substrate-bn");
-
-    assert_eq!(a.unwrap(), b.unwrap(), "G1 add implementations disagree");
-
-    // -- G1 mul --
-    env::log("cycle-start: eip196/mul/risc0-crypto");
-    let a = bn254_g1_mul_risc0(black_box(&p1), black_box(&scalar));
-    black_box(&a);
-    env::log("cycle-end: eip196/mul/risc0-crypto");
-
-    env::log("cycle-start: eip196/mul/substrate-bn");
-    let b = bn254_g1_mul_substrate(black_box(&p1), black_box(&scalar));
-    black_box(&b);
-    env::log("cycle-end: eip196/mul/substrate-bn");
-
-    assert_eq!(a.unwrap(), b.unwrap(), "G1 mul implementations disagree");
+    env::log("cycle-start: eip196/mul");
+    let r = bn254_g1_mul(black_box(&p1), black_box(&scalar));
+    black_box(&r);
+    env::log("cycle-end: eip196/mul");
+    assert!(r.is_some(), "eip196 mul failed");
 }
 
-// -- EIP-2537 (BLS12-381 G1 add) comparison: risc0-crypto vs blst --
+// -- EIP-2537 (BLS12-381 G1 add & MSM) --
 //
-// both implementations use the revm-precompile Crypto interface:
+// uses the revm-precompile Crypto interface:
 //   fn bls12_381_g1_add(a: G1Point, b: G1Point) -> [u8; 96]
-//   where G1Point = ([u8; FP_LENGTH], [u8; FP_LENGTH])
+//   fn bls12_381_g1_msm(pairs: &[(G1Point, [u8; 32])]) -> [u8; 96]
 //
 // the timed region includes all parsing from raw bytes.
 
 const FP_LENGTH: usize = 48;
 type G1Point = ([u8; FP_LENGTH], [u8; FP_LENGTH]);
+const SCALAR_LENGTH: usize = 32;
+type G1PointScalar = (G1Point, [u8; SCALAR_LENGTH]);
 
 /// Generate test inputs for EIP-2537 benchmarks (not timed).
 fn eip2537_setup() -> (G1Point, G1Point) {
@@ -306,7 +226,7 @@ fn eip2537_setup() -> (G1Point, G1Point) {
 }
 
 /// BLS12-381 G1 point addition via risc0-crypto (revm-precompile interface).
-fn bls12_381_g1_add_risc0(a: G1Point, b: G1Point) -> Option<[u8; 96]> {
+fn bls12_381_g1_add(a: G1Point, b: G1Point) -> Option<[u8; 96]> {
     use risc0_crypto::curves::bls12_381;
 
     let read = |point: &G1Point| -> Option<bls12_381::Affine> {
@@ -331,73 +251,16 @@ fn bls12_381_g1_add_risc0(a: G1Point, b: G1Point) -> Option<[u8; 96]> {
     Some(result)
 }
 
-/// BLS12-381 G1 point addition via blst (revm-precompile interface).
-fn bls12_381_g1_add_blst(a: G1Point, b: G1Point) -> Option<[u8; 96]> {
-    use blst::*;
-
-    let read_fp = |bytes: &[u8; FP_LENGTH]| -> blst_fp {
-        let mut fp = blst_fp::default();
-        unsafe { blst_fp_from_bendian(&mut fp, bytes.as_ptr()) };
-        fp
-    };
-
-    let read_point = |point: &G1Point| -> Option<blst_p1_affine> {
-        let p = blst_p1_affine { x: read_fp(&point.0), y: read_fp(&point.1) };
-        unsafe { blst_p1_affine_on_curve(&p).then_some(p) }
-    };
-
-    let p1 = read_point(&a)?;
-    let p2 = read_point(&b)?;
-
-    let mut p1_jac = blst_p1::default();
-    unsafe { blst_p1_from_affine(&mut p1_jac, &p1) };
-
-    let mut sum = blst_p1::default();
-    unsafe { blst_p1_add_or_double_affine(&mut sum, &p1_jac, &p2) };
-
-    let mut result_aff = blst_p1_affine::default();
-    unsafe { blst_p1_to_affine(&mut result_aff, &sum) };
-
-    let mut result = [0u8; 96];
-    unsafe {
-        blst_bendian_from_fp(result.as_mut_ptr(), &result_aff.x);
-        blst_bendian_from_fp(result[FP_LENGTH..].as_mut_ptr(), &result_aff.y);
-    };
-    Some(result)
-}
-
 fn bench_eip2537() {
     let (a, b) = eip2537_setup();
 
-    env::log("cycle-start: eip2537/add/risc0-crypto");
-    let r1 = bls12_381_g1_add_risc0(black_box(a), black_box(b));
-    black_box(&r1);
-    env::log("cycle-end: eip2537/add/risc0-crypto");
+    env::log("cycle-start: eip2537/add");
+    let r = bls12_381_g1_add(black_box(a), black_box(b));
+    black_box(&r);
+    env::log("cycle-end: eip2537/add");
 
-    env::log("cycle-start: eip2537/add/blst");
-    let r2 = bls12_381_g1_add_blst(black_box(a), black_box(b));
-    black_box(&r2);
-    env::log("cycle-end: eip2537/add/blst");
-
-    assert_eq!(r1.unwrap(), r2.unwrap(), "G1 add implementations disagree");
+    assert!(r.is_some(), "eip2537 add failed");
 }
-
-// -- EIP-2537 BLS12_G1MSM comparison: risc0-crypto vs blst (revm upstream) --
-//
-// both implementations use the revm-precompile Crypto interface:
-//   fn bls12_381_g1_msm(pairs: &[(G1Point, [u8; 32])]) -> [u8; 96]
-//
-// risc0-crypto: k=1 uses direct scalar mul, k>1 uses pairwise
-// scalar_mul + add (linear scaling).
-// blst: k=1 uses direct scalar mul, k>1 uses Pippenger's MSM
-// (sublinear scaling), matching revm's p1_msm exactly.
-//
-// benchmarked at k=1 and k=128 (EIP-2537 discount table max).
-//
-// the timed region includes all parsing from raw bytes.
-
-const SCALAR_LENGTH: usize = 32;
-type G1PointScalar = (G1Point, [u8; SCALAR_LENGTH]);
 
 /// Generate 128 distinct (point, scalar) pairs for MSM benchmarks (not timed).
 fn eip2537_msm_setup() -> alloc::vec::Vec<G1PointScalar> {
@@ -436,8 +299,9 @@ fn eip2537_msm_setup() -> alloc::vec::Vec<G1PointScalar> {
     result
 }
 
-/// Parse a G1Point from raw bytes into a BLS12-381 affine point (with subgroup check).
-fn read_g1_risc0(point: &G1Point) -> Option<risc0_crypto::curves::bls12_381::Affine> {
+/// Parse a G1Point from raw bytes into a BLS12-381 affine point (with subgroup
+/// check).
+fn read_g1(point: &G1Point) -> Option<risc0_crypto::curves::bls12_381::Affine> {
     use risc0_crypto::curves::bls12_381;
     let x = bls12_381::Fq::from_bigint(BigInt::from_be_bytes(&point.0))?;
     let y = bls12_381::Fq::from_bigint(BigInt::from_be_bytes(&point.1))?;
@@ -449,13 +313,13 @@ fn read_g1_risc0(point: &G1Point) -> Option<risc0_crypto::curves::bls12_381::Aff
 }
 
 /// Parse a 32-byte big-endian EIP scalar into a BLS12-381 scalar field element.
-fn read_scalar_risc0(scalar: &[u8; SCALAR_LENGTH]) -> risc0_crypto::curves::bls12_381::Fr {
+fn read_scalar(scalar: &[u8; SCALAR_LENGTH]) -> risc0_crypto::curves::bls12_381::Fr {
     use risc0_crypto::curves::bls12_381;
     bls12_381::Fr::reduce_from_bigint(BigInt::from_be_bytes(scalar))
 }
 
 /// Encode a BLS12-381 affine point as 96 big-endian bytes.
-fn encode_g1_risc0(p: &risc0_crypto::curves::bls12_381::Affine) -> [u8; 96] {
+fn encode_g1(p: &risc0_crypto::curves::bls12_381::Affine) -> [u8; 96] {
     let mut result = [0u8; 96];
     if let Some((x, y)) = p.xy() {
         x.as_bigint().write_be_bytes(&mut result[..FP_LENGTH]);
@@ -467,110 +331,39 @@ fn encode_g1_risc0(p: &risc0_crypto::curves::bls12_381::Affine) -> [u8; 96] {
 /// BLS12-381 G1 MSM via risc0-crypto.
 /// k=1: direct scalar mul. k>1: double_scalar_mul (Shamir's trick) on
 /// chunks of 2, with a trailing single scalar mul for odd k.
-fn bls12_381_g1_msm_risc0(pairs: &[G1PointScalar]) -> Option<[u8; 96]> {
+fn bls12_381_g1_msm(pairs: &[G1PointScalar]) -> Option<[u8; 96]> {
     use risc0_crypto::curves::bls12_381;
 
     if pairs.len() == 1 {
         // k=1: direct scalar mul, no accumulator overhead
-        let p = read_g1_risc0(&pairs[0].0)?;
-        let s = read_scalar_risc0(&pairs[0].1);
-        return Some(encode_g1_risc0(&(&p * &s)));
+        let p = read_g1(&pairs[0].0)?;
+        let s = read_scalar(&pairs[0].1);
+        return Some(encode_g1(&(&p * &s)));
     }
 
     // k>1: process pairs via double_scalar_mul (Shamir's trick) - saves ~n
     // doublings per pair compared to two independent scalar muls.
     let mut acc = bls12_381::Affine::IDENTITY;
     for chunk in pairs.chunks_exact(2) {
-        let p0 = read_g1_risc0(&chunk[0].0)?;
-        let s0 = read_scalar_risc0(&chunk[0].1);
-        let p1 = read_g1_risc0(&chunk[1].0)?;
-        let s1 = read_scalar_risc0(&chunk[1].1);
+        let p0 = read_g1(&chunk[0].0)?;
+        let s0 = read_scalar(&chunk[0].1);
+        let p1 = read_g1(&chunk[1].0)?;
+        let s1 = read_scalar(&chunk[1].1);
         acc = &acc + &bls12_381::Affine::double_scalar_mul(&s0, &p0, &s1, &p1);
     }
-    Some(encode_g1_risc0(&acc))
-}
-
-/// BLS12-381 G1 MSM via blst, matching revm's p1_msm implementation:
-/// k=1: direct scalar mul. k>1: Pippenger's MSM (sublinear scaling).
-fn bls12_381_g1_msm_blst(pairs: &[G1PointScalar]) -> Option<[u8; 96]> {
-    use alloc::vec::Vec;
-    use blst::*;
-
-    let mut points = Vec::with_capacity(pairs.len());
-    let mut scalars = Vec::with_capacity(pairs.len());
-
-    for (point, scalar) in pairs {
-        // parse point
-        let mut fp_x = blst_fp::default();
-        let mut fp_y = blst_fp::default();
-        unsafe { blst_fp_from_bendian(&mut fp_x, point.0.as_ptr()) };
-        unsafe { blst_fp_from_bendian(&mut fp_y, point.1.as_ptr()) };
-        let p_aff = blst_p1_affine { x: fp_x, y: fp_y };
-        if unsafe { !blst_p1_affine_on_curve(&p_aff) } {
-            return None;
-        }
-        // MSM requires subgroup check per EIP-2537
-        if unsafe { !blst_p1_affine_in_g1(&p_aff) } {
-            return None;
-        }
-
-        // parse scalar
-        let mut s = blst_scalar::default();
-        unsafe { blst_scalar_from_bendian(&mut s, scalar.as_ptr()) };
-
-        // skip zero scalars after validating the point (revm optimization)
-        if scalar.iter().all(|&b| b == 0) {
-            continue;
-        }
-
-        points.push(p_aff);
-        scalars.push(s);
-    }
-
-    if points.is_empty() {
-        return Some([0u8; 96]);
-    }
-
-    // revm's p1_msm: direct scalar mul for k=1, Pippenger's for k>1
-    let result_jac = if points.len() == 1 {
-        let mut p_jac = blst_p1::default();
-        unsafe { blst_p1_from_affine(&mut p_jac, &points[0]) };
-        let mut result = blst_p1::default();
-        unsafe { blst_p1_mult(&mut result, &p_jac, scalars[0].b.as_ptr(), 255) };
-        result
-    } else {
-        let scalars_bytes = unsafe {
-            core::slice::from_raw_parts(scalars.as_ptr() as *const u8, scalars.len() * 32)
-        };
-        points.mult(scalars_bytes, SCALAR_LENGTH * 8)
-    };
-
-    let mut result_aff = blst_p1_affine::default();
-    unsafe { blst_p1_to_affine(&mut result_aff, &result_jac) };
-
-    let mut result = [0u8; 96];
-    unsafe {
-        blst_bendian_from_fp(result.as_mut_ptr(), &result_aff.x);
-        blst_bendian_from_fp(result[FP_LENGTH..].as_mut_ptr(), &result_aff.y);
-    };
-    Some(result)
+    Some(encode_g1(&acc))
 }
 
 fn bench_eip2537_msm() {
     let pairs = eip2537_msm_setup();
 
     for &k in &[1, 128] {
-        env::log(&format!("cycle-start: eip2537/msm/{k}/risc0-crypto"));
-        let r1 = bls12_381_g1_msm_risc0(black_box(&pairs[..k]));
-        black_box(&r1);
-        env::log(&format!("cycle-end: eip2537/msm/{k}/risc0-crypto"));
+        env::log(&format!("cycle-start: eip2537/msm/{k}"));
+        let r = bls12_381_g1_msm(black_box(&pairs[..k]));
+        black_box(&r);
+        env::log(&format!("cycle-end: eip2537/msm/{k}"));
 
-        env::log(&format!("cycle-start: eip2537/msm/{k}/blst"));
-        let r2 = bls12_381_g1_msm_blst(black_box(&pairs[..k]));
-        black_box(&r2);
-        env::log(&format!("cycle-end: eip2537/msm/{k}/blst"));
-
-        assert_eq!(r1.unwrap(), r2.unwrap(), "G1 MSM k={k} implementations disagree");
+        assert!(r.is_some(), "eip2537 msm k={k} failed");
     }
 }
 
