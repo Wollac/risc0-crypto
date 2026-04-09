@@ -358,10 +358,10 @@ fn bench_eip2537_msm() {
     let pairs = eip2537_msm_setup();
 
     for &k in &[1, 128] {
-        env::log(&format!("cycle-start: eip2537/msm/{k}"));
+        env::log(&format!("cycle-start: eip2537/msm_{k}"));
         let r = bls12_381_g1_msm(black_box(&pairs[..k]));
         black_box(&r);
-        env::log(&format!("cycle-end: eip2537/msm/{k}"));
+        env::log(&format!("cycle-end: eip2537/msm_{k}"));
 
         assert!(r.is_some(), "eip2537 msm k={k} failed");
     }
