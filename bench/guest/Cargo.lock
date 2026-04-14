@@ -1056,6 +1056,7 @@ dependencies = [
 name = "guest"
 version = "0.1.0"
 dependencies = [
+ "hex-literal",
  "risc0-crypto",
  "risc0-zkvm",
 ]

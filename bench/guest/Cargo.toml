@@ -10,5 +10,6 @@ codegen-units = 1
 lto = "fat"
 
 [dependencies]
+hex-literal = "0.4"
 risc0-crypto = { path = "../.." }
 risc0-zkvm = "3.0"
