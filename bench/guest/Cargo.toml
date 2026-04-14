@@ -1,0 +1,15 @@
+[package]
+name = "guest"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[profile.release]
+codegen-units = 1
+lto = "fat"
+
+[dependencies]
+hex-literal = "0.4"
+risc0-crypto = { path = "../.." }
+risc0-zkvm = "3.0"
