@@ -44,7 +44,6 @@ fn main() {
 
 // -- ecrecover (secp256k1) --
 
-/// secp256k1 ecrecover via risc0-crypto.
 fn ecrecover(sig: &[u8; 64], recid: u8, msg: &[u8; 32]) -> Option<[u8; 64]> {
     let r = secp256k1::Fr::from_bigint(BigInt::from_be_bytes(&sig[..32]))?;
     let s = secp256k1::Fr::from_bigint(BigInt::from_be_bytes(&sig[32..]))?;
@@ -300,10 +299,6 @@ fn bench_field_ops() {
 }
 
 // -- EC benchmarks --
-//
-// two representative curves:
-// - secp256r1: 256-bit (NIST P-256)
-// - secp384r1: 384-bit (NIST P-384)
 
 macro_rules! bench_ec {
     ($name:expr, $Affine:ty, $Fr:ty, $scalar:expr) => {{
