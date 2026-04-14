@@ -44,6 +44,7 @@ fn main() {
 
 // -- ecrecover (secp256k1) --
 
+/// secp256k1 ecrecover via risc0-crypto.
 fn ecrecover(sig: &[u8; 64], recid: u8, msg: &[u8; 32]) -> Option<[u8; 64]> {
     let r = secp256k1::Fr::from_bigint(BigInt::from_be_bytes(&sig[..32]))?;
     let s = secp256k1::Fr::from_bigint(BigInt::from_be_bytes(&sig[32..]))?;
@@ -95,14 +96,14 @@ fn encode_bn254_g1(p: &bn254::Affine) -> [u8; 64] {
     result
 }
 
-// revm-precompile interface
+/// BN254 G1 point addition via risc0-crypto (revm-precompile interface).
 fn bn254_g1_add(p1: &[u8], p2: &[u8]) -> Option<[u8; 64]> {
     let p1 = decode_bn254_g1(p1)?;
     let p2 = decode_bn254_g1(p2)?;
     Some(encode_bn254_g1(&(&p1 + &p2)))
 }
 
-// revm-precompile interface
+/// BN254 G1 scalar multiplication via risc0-crypto (revm-precompile interface).
 fn bn254_g1_mul(point: &[u8], scalar: &[u8]) -> Option<[u8; 64]> {
     let p = decode_bn254_g1(point)?;
     // EVM scalar is a raw 256-bit uint, may be >= group order
@@ -157,7 +158,7 @@ fn encode_bls12381_g1(p: &bls12_381::Affine) -> [u8; 96] {
     result
 }
 
-// revm-precompile interface
+/// BLS12-381 G1 point addition via risc0-crypto (revm-precompile interface).
 fn bls12_381_g1_add(a: BlsG1Point, b: BlsG1Point) -> Option<[u8; 96]> {
     let p1 = decode_bls12381_g1(&a)?;
     let p2 = decode_bls12381_g1(&b)?;
@@ -210,8 +211,9 @@ fn eip2537_msm_setup() -> alloc::vec::Vec<BlsG1PointScalar> {
         .collect()
 }
 
-// k=1: direct scalar mul. k>1: double_scalar_mul (Shamir's trick) on
-// chunks of 2, with a trailing single scalar mul for odd k.
+/// BLS12-381 G1 MSM via risc0-crypto.
+/// k=1: direct scalar mul. k>1: double_scalar_mul (Shamir's trick) on
+/// chunks of 2, with a trailing single scalar mul for odd k.
 fn bls12_381_g1_msm(pairs: &[BlsG1PointScalar]) -> Option<[u8; 96]> {
     let read_point =
         |p: &BlsG1Point| decode_bls12381_g1(p).filter(|p| p.is_in_correct_subgroup());
@@ -298,6 +300,10 @@ fn bench_field_ops() {
 }
 
 // -- EC benchmarks --
+//
+// two representative curves:
+// - secp256r1: 256-bit (NIST P-256)
+// - secp384r1: 384-bit (NIST P-384)
 
 macro_rules! bench_ec {
     ($name:expr, $Affine:ty, $Fr:ty, $scalar:expr) => {{
