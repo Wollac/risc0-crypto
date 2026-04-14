@@ -44,7 +44,6 @@ fn main() {
 
 // -- ecrecover (secp256k1) --
 
-/// secp256k1 ecrecover via risc0-crypto.
 fn ecrecover(sig: &[u8; 64], recid: u8, msg: &[u8; 32]) -> Option<[u8; 64]> {
     let r = secp256k1::Fr::from_bigint(BigInt::from_be_bytes(&sig[..32]))?;
     let s = secp256k1::Fr::from_bigint(BigInt::from_be_bytes(&sig[32..]))?;
@@ -96,14 +95,14 @@ fn encode_bn254_g1(p: &bn254::Affine) -> [u8; 64] {
     result
 }
 
-/// BN254 G1 point addition via risc0-crypto (revm-precompile interface).
+// revm-precompile interface
 fn bn254_g1_add(p1: &[u8], p2: &[u8]) -> Option<[u8; 64]> {
     let p1 = decode_bn254_g1(p1)?;
     let p2 = decode_bn254_g1(p2)?;
     Some(encode_bn254_g1(&(&p1 + &p2)))
 }
 
-/// BN254 G1 scalar multiplication via risc0-crypto (revm-precompile interface).
+// revm-precompile interface
 fn bn254_g1_mul(point: &[u8], scalar: &[u8]) -> Option<[u8; 64]> {
     let p = decode_bn254_g1(point)?;
     // EVM scalar is a raw 256-bit uint, may be >= group order
@@ -134,12 +133,12 @@ fn bench_eip196() {
 
 // -- EIP-2537 (BLS12-381 G1 add & MSM) --
 
-const FP_LENGTH: usize = 48;
-type G1Point = ([u8; FP_LENGTH], [u8; FP_LENGTH]);
-const SCALAR_LENGTH: usize = 32;
-type G1PointScalar = (G1Point, [u8; SCALAR_LENGTH]);
+const BLS_FP_LENGTH: usize = 48;
+type BlsG1Point = ([u8; BLS_FP_LENGTH], [u8; BLS_FP_LENGTH]);
+const BLS_SCALAR_LENGTH: usize = 32;
+type BlsG1PointScalar = (BlsG1Point, [u8; BLS_SCALAR_LENGTH]);
 
-fn decode_bls12381_g1(point: &G1Point) -> Option<bls12_381::Affine> {
+fn decode_bls12381_g1(point: &BlsG1Point) -> Option<bls12_381::Affine> {
     let x = bls12_381::Fq::from_bigint(BigInt::from_be_bytes(&point.0))?;
     let y = bls12_381::Fq::from_bigint(BigInt::from_be_bytes(&point.1))?;
     if x.is_zero() && y.is_zero() {
@@ -152,14 +151,14 @@ fn decode_bls12381_g1(point: &G1Point) -> Option<bls12_381::Affine> {
 fn encode_bls12381_g1(p: &bls12_381::Affine) -> [u8; 96] {
     let mut result = [0u8; 96];
     if let Some((x, y)) = p.xy() {
-        x.as_bigint().write_be_bytes(&mut result[..FP_LENGTH]);
-        y.as_bigint().write_be_bytes(&mut result[FP_LENGTH..]);
+        x.as_bigint().write_be_bytes(&mut result[..BLS_FP_LENGTH]);
+        y.as_bigint().write_be_bytes(&mut result[BLS_FP_LENGTH..]);
     }
     result
 }
 
-/// BLS12-381 G1 point addition via risc0-crypto (revm-precompile interface).
-fn bls12_381_g1_add(a: G1Point, b: G1Point) -> Option<[u8; 96]> {
+// revm-precompile interface
+fn bls12_381_g1_add(a: BlsG1Point, b: BlsG1Point) -> Option<[u8; 96]> {
     let p1 = decode_bls12381_g1(&a)?;
     let p2 = decode_bls12381_g1(&b)?;
     Some(encode_bls12381_g1(&(&p1 + &p2)))
@@ -167,7 +166,7 @@ fn bls12_381_g1_add(a: G1Point, b: G1Point) -> Option<[u8; 96]> {
 
 fn bench_eip2537() {
     // inputs from mainnet tx 0x815155fbfe4c002377c95a9073c89bffb8413edebc2413a25e5e7b82a6da00b2
-    let a: G1Point = (
+    let a: BlsG1Point = (
         hex!(
             "136f564658b7f26baf272ea4e25462a7a4ac9d17d83c4eda81aa47374d68d227930a22195526bd80ee456354a3e1a122"
         ),
@@ -175,7 +174,7 @@ fn bench_eip2537() {
             "073f227ca363b58cba59c442aca3806cff2b8c5c7182981505544cc451490697a71d796aa7face0ec848b85254ffdf0d"
         ),
     );
-    let b: G1Point = (
+    let b: BlsG1Point = (
         hex!(
             "0115ed13b5630de15cc5686ef7dfe5e90538100ce34b0f46f42f0d6b85b0523bb9f383f38e377aeb5d5cc43808063a15"
         ),
@@ -189,9 +188,9 @@ fn bench_eip2537() {
     });
 }
 
-fn eip2537_msm_setup() -> alloc::vec::Vec<G1PointScalar> {
+fn eip2537_msm_setup() -> alloc::vec::Vec<BlsG1PointScalar> {
     // base pair from mainnet tx 0x815155fbfe4c002377c95a9073c89bffb8413edebc2413a25e5e7b82a6da00b2
-    let point: G1Point = (
+    let point: BlsG1Point = (
         hex!(
             "1186b2f2b6871713b10bc24ef04a9a397e084b3358f7f1404f0a4ee1acc6d254997032f77fd77593fab7c896b7cfce1e"
         ),
@@ -205,19 +204,20 @@ fn eip2537_msm_setup() -> alloc::vec::Vec<G1PointScalar> {
     (0..128)
         .map(|i: u8| {
             let mut s = scalar;
-            s[SCALAR_LENGTH - 1] = i;
+            s[BLS_SCALAR_LENGTH - 1] = i;
             (point, s)
         })
         .collect()
 }
 
-/// BLS12-381 G1 MSM via risc0-crypto.
-/// k=1: direct scalar mul. k>1: double_scalar_mul (Shamir's trick) on
-/// chunks of 2, with a trailing single scalar mul for odd k.
-fn bls12_381_g1_msm(pairs: &[G1PointScalar]) -> Option<[u8; 96]> {
-    let read_point = |p: &G1Point| decode_bls12381_g1(p).filter(|p| p.is_in_correct_subgroup());
-    let read_scalar =
-        |s: &[u8; SCALAR_LENGTH]| bls12_381::Fr::reduce_from_bigint(BigInt::from_be_bytes(s));
+// k=1: direct scalar mul. k>1: double_scalar_mul (Shamir's trick) on
+// chunks of 2, with a trailing single scalar mul for odd k.
+fn bls12_381_g1_msm(pairs: &[BlsG1PointScalar]) -> Option<[u8; 96]> {
+    let read_point =
+        |p: &BlsG1Point| decode_bls12381_g1(p).filter(|p| p.is_in_correct_subgroup());
+    let read_scalar = |s: &[u8; BLS_SCALAR_LENGTH]| {
+        bls12_381::Fr::reduce_from_bigint(BigInt::from_be_bytes(s))
+    };
 
     if pairs.len() == 1 {
         let p = read_point(&pairs[0].0)?;
@@ -298,10 +298,6 @@ fn bench_field_ops() {
 }
 
 // -- EC benchmarks --
-//
-// two representative curves:
-// - secp256r1: 256-bit (NIST P-256)
-// - secp384r1: 384-bit (NIST P-384)
 
 macro_rules! bench_ec {
     ($name:expr, $Affine:ty, $Fr:ty, $scalar:expr) => {{
