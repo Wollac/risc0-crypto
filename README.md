@@ -48,6 +48,8 @@ Cycle counts measured on R0VM against the risc0-patched upstream crates
 | EIP-196 G1 add (BN254) | 2,282 | 9,552 | 4.2x |
 | EIP-196 G1 mul (BN254) | 68,516 | 1,321,073 | 19.3x |
 
+Live benchmark tracking: [risc0-crypto benchmarks](https://wollac.github.io/risc0-crypto/dev/bench/)
+
 ## Testing
 
 Tests require the RISC-V guest environment since risc0-bigint2 uses RISC-V syscalls:
