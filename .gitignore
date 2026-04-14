@@ -11,9 +11,6 @@ target/
 # Claude Code
 .claude/
 
-# Benchmarks (local only)
-bench/
-
 # Godbolt / assembly inspection
 godbolt.rs
 libgodbolt.rlib
