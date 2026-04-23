@@ -1,59 +1,29 @@
-# risc0-crypto
+# risc0-crypto workspace
 
-Cryptographic primitives built on
-[risc0-bigint2](https://crates.io/crates/risc0-bigint2), designed for
-use inside [RISC Zero](https://risczero.com/) guest programs.
-Uses fewer cycles than the patched upstream crates provided by RISC Zero.
+R0VM-accelerated cryptography for [RISC Zero](https://risczero.com/) guest
+programs.
 
-## Features
+## Crates
 
-- R0VM accelerated, `no_std`, zero heap allocation
-- [Short Weierstrass](https://en.wikipedia.org/wiki/Elliptic_curve#Short_Weierstrass_form) curve arithmetic
-- Prime field arithmetic (`Fp256`, `Fp384`) with checked and unchecked operations
-- ECDSA signing and verification (any compatible curve)
-- Modular exponentiation for 256, 384, and 4096-bit integers
+- [**risc0-crypto**](crates/crypto) - primitives library: short Weierstrass
+  curves, prime field arithmetic (`Fp256`, `Fp384`), ECDSA, and 256/384/4096-bit
+  modular exponentiation. Uses fewer cycles than the risc0-patched upstream crates.
+- [**risc0-crypto-evm**](crates/evm) - thin EVM-ABI wrappers over the primitives
+  (EIP-196 BN254 add/mul, EIP-198 modexp, EIP-7951 P-256 verify, ecrecover,
+  SHA-256). Consumed by zeth and kailua - no revm dependency so it never blocks
+  a revm upgrade.
 
-## Supported Curves
+See [`crates/crypto/README.md`](crates/crypto/README.md) for the
+library walkthrough, benchmark numbers, and usage examples.
 
-- [secp256k1](src/curves/secp256k1.rs)
-- [secp256r1](src/curves/secp256r1.rs)
-- [secp384r1](src/curves/secp384r1.rs)
-- [BN254](src/curves/bn254.rs)
-- [Grumpkin](src/curves/grumpkin.rs)
-- [BLS12-381](src/curves/bls12_381.rs)
+## Benchmarks
 
-## Example
-
-```rust,ignore
-use risc0_crypto::{fp, ecdsa::Signature, curves::secp256k1::{self, Affine, Fr}};
-
-// scalar multiplication
-let scalar: Fr = fp!("0xdeadbeef");
-let point = &Affine::GENERATOR * &scalar;
-
-// ECDSA sign and verify
-let sig = Signature::<secp256k1::Config, 8>::sign(&d, &k, hash).unwrap();
-assert!(sig.verify(&pubkey, hash));
-```
-
-## EVM Precompile Performance
-
-Cycle counts measured on R0VM against the risc0-patched upstream crates
-([k256](https://github.com/risc0/RustCrypto-elliptic-curves),
-[substrate-bn](https://github.com/risc0/paritytech-bn)).
-
-| Precompile | risc0-crypto | upstream | speedup |
-|------------|-------------|----------|---------|
-| ecrecover (secp256k1) | 120,811 | 568,195 | 4.7x |
-| EIP-196 G1 add (BN254) | 2,282 | 9,552 | 4.2x |
-| EIP-196 G1 mul (BN254) | 68,516 | 1,321,073 | 19.3x |
-
-Live benchmark tracking: [risc0-crypto benchmarks](https://wollac.github.io/risc0-crypto/dev/bench/)
-
-## Testing
-
-Tests require the RISC-V guest environment since risc0-bigint2 uses RISC-V syscalls:
+`bench/` is its own workspace (pulls in `risc0-zkvm` client + the RISC-V guest
+build tooling). Run locally with `rzup r0vm` installed:
 
 ```bash
-cargo risczero guest test
+cargo run --release --manifest-path bench/Cargo.toml
 ```
+
+Live benchmark tracking:
+[risc0-crypto benchmarks](https://wollac.github.io/risc0-crypto/dev/bench/).

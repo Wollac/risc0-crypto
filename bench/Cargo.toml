@@ -1,3 +1,7 @@
+# Standalone workspace - the benchmark harness pulls in risc0-zkvm and a guest
+# methods build, which we don't want in the main workspace's dependency graph.
+[workspace]
+
 [package]
 name = "risc0-crypto-bench"
 version = "0.1.0"
