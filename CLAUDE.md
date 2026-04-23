@@ -15,6 +15,10 @@ cargo risczero guest test
 
 # With guest execution metrics (total cycles, bigint2 syscall counts):
 RUST_LOG=info RISC0_INFO=true cargo risczero guest test
+
+# Benchmarks (separate workspace in bench/, requires rzup r0vm)
+cargo run --release --manifest-path bench/Cargo.toml
+cargo run --release --manifest-path bench/Cargo.toml -- --json bench-results.json
 ```
 
 Tests **cannot** run on the host - `risc0-bigint2` field and EC operations are backed by RISC-V syscalls.

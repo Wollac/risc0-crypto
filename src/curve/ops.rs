@@ -7,7 +7,7 @@
 //! file for why we bypass risc0-bigint2's EC API.
 
 use super::{Coords, CurveConfig, CurveOps};
-use crate::{BigInt, field::FieldConfig};
+use crate::{BigInt, Fp, field::FieldConfig};
 use bytemuck::TransparentWrapper;
 use core::{mem::MaybeUninit, ptr};
 use include_bytes_aligned::include_bytes_aligned;
@@ -120,17 +120,20 @@ const fn cast_coords_mut<T: TransparentWrapper<Inner>, Inner>(ptr: *mut [T; 2]) 
 /// R0VM backend for EC arithmetic, backed by `sys_bigint2` FFI calls.
 pub enum R0VMCurveOps {}
 
-/// Compile-time curve parameters `[modulus, a, b]` derived from any [`CurveConfig`].
+/// Compile-time curve parameters `[modulus, a, b]` derived from prime-field [`CurveConfig`]s.
 trait CurveParams<const N: usize> {
     const CURVE_PARAMS: [BigInt<N>; 3];
 }
 
-impl<const N: usize, C: CurveConfig<N>> CurveParams<N> for C {
+impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize> CurveParams<N>
+    for C
+{
     const CURVE_PARAMS: [BigInt<N>; 3] =
-        [C::BaseFieldConfig::MODULUS, C::COEFF_A.to_bigint(), C::COEFF_B.to_bigint()];
+        [P::MODULUS, C::COEFF_A.to_bigint(), C::COEFF_B.to_bigint()];
 }
 
-impl<C: CurveConfig<N>, const N: usize> CurveOps<C, N> for R0VMCurveOps
+impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize> CurveOps<C, N>
+    for R0VMCurveOps
 where
     BigInt<N>: CurveFfi,
 {
