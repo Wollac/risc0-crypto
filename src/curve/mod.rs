@@ -115,6 +115,32 @@ pub trait CurveConfig<const N: usize>: Sized + Send + Sync + 'static {
     }
 }
 
+/// A [`CurveConfig`] whose base field is a prime field `Fp<BaseFieldConfig, N>`.
+///
+/// Pinning the base field to a concrete [`Fp`] type (rather than the abstract
+/// [`Field`] supertrait) is load-bearing for R0VM codegen: LLVM can only forward
+/// pointers to `const` operands into the bigint2 ecalls when it sees the concrete
+/// type at the call site. Without this bound, operands get defensively copied to
+/// stack buffers (costing ~130 cycles per `is_on_curve` on P-384).
+///
+/// Automatically implemented for every [`CurveConfig`] whose `BaseField = Fp<P, N>`
+/// for some `P: FieldConfig<N>`. G2-style curves with extension field bases (e.g.
+/// Fp2) don't satisfy this and stay on the abstract [`CurveConfig`] only.
+pub trait PrimeCurveConfig<const N: usize>:
+    CurveConfig<N, BaseField = Fp<<Self as PrimeCurveConfig<N>>::BaseFieldConfig, N>>
+{
+    /// The config of the prime base field.
+    type BaseFieldConfig: FieldConfig<N>;
+}
+
+impl<P, C, const N: usize> PrimeCurveConfig<N> for C
+where
+    P: FieldConfig<N>,
+    C: CurveConfig<N, BaseField = Fp<P, N>>,
+{
+    type BaseFieldConfig = P;
+}
+
 mod cofactor {
     use super::CurveConfig;
     use crate::BitAccess;
@@ -195,22 +221,6 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     /// The curve's standard generator point.
     pub const GENERATOR: Self = C::GENERATOR;
 
-    /// Creates a point from coordinates, returning `None` if the point is not on the curve.
-    ///
-    /// Does not check subgroup membership - use [`new_in_subgroup`](Self::new_in_subgroup) for
-    /// that. For curves with cofactor 1, `new` and `new_in_subgroup` are equivalent.
-    pub fn new(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
-        let p = Self::from_xy(x, y);
-        if p.is_on_curve() { Some(p) } else { None }
-    }
-
-    /// Creates a point from coordinates, returning `None` if the point is not on the curve or
-    /// not in the correct subgroup.
-    pub fn new_in_subgroup(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
-        let p = Self::new(x, y)?;
-        if p.is_in_correct_subgroup() { Some(p) } else { None }
-    }
-
     /// Creates a point from coordinates without validating on-curve or subgroup membership.
     ///
     /// # Safety
@@ -275,21 +285,6 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         if self.identity { None } else { Some((&self.coords[0], &self.coords[1])) }
     }
 
-    /// Checks whether `(x, y)` satisfies the curve equation `y² = x³ + ax + b`.
-    #[must_use]
-    pub fn is_on_curve(&self) -> bool {
-        let Some((x, y)) = self.xy_unverified() else {
-            return true; // identity is on every curve
-        };
-
-        let lhs = y.mul(y);
-        let mut rhs = x.mul(x);
-        Self::add_a(&mut rhs);
-        rhs.mul_assign(x);
-        rhs.add_assign(C::COEFF_B.as_unverified());
-        lhs.check_is_eq(&rhs)
-    }
-
     /// Returns `true` if this point is in the prime-order subgroup.
     ///
     /// For curves with cofactor 1 this always returns `true`. For curves with a cofactor
@@ -306,24 +301,6 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     #[inline(always)]
     fn raw_is_y_zero(&self) -> bool {
         !cofactor::is_odd::<C, _>() && self.coords[1].raw_is_zero()
-    }
-
-    /// Adds [`COEFF_A`](CurveConfig::COEFF_A) in place, skipped at compile time when `a == 0`.
-    #[inline(always)]
-    fn add_a(val: &mut UnverifiedBaseField<C, N>) {
-        if !C::COEFF_A.is_zero() {
-            val.add_assign(C::COEFF_A.as_unverified());
-        }
-    }
-
-    /// Computes the curve RHS `x³ + ax + b` for a given x-coordinate.
-    #[inline]
-    fn curve_rhs(x: &UnverifiedBaseField<C, N>) -> UnverifiedBaseField<C, N> {
-        let mut rhs = x.mul(x);
-        Self::add_a(&mut rhs);
-        rhs.mul_assign(x);
-        rhs.add_assign(C::COEFF_B.as_unverified());
-        rhs
     }
 
     /// Computes `[2]src` and writes the result into `self`.
@@ -480,18 +457,72 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     }
 }
 
-// --- Prime-field-specific methods (point decompression) ---
+// --- Prime-field-specific methods ---
 //
-// These require the base field to be a concrete prime field `Fp<P, N>`, not a generic `Field`.
-// Extension field curves (e.g. G2 over Fp2) don't support decompression.
+// These require the base field to be a concrete prime field `Fp<P, N>`, exposed via
+// [`PrimeCurveConfig`]. The tight concrete bound is load-bearing for R0VM codegen: without it,
+// LLVM defensively copies COEFF_A and COEFF_B to stack buffers before every ecall (~130 cycles
+// per `is_on_curve` on P-384). Extension field curves (e.g. G2 over Fp2) don't implement
+// `PrimeCurveConfig` and use different constructors / validation paths.
 
-impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize> AffinePoint<C, N> {
+impl<C: PrimeCurveConfig<N>, const N: usize> AffinePoint<C, N> {
+    /// Creates a point from coordinates, returning `None` if the point is not on the curve.
+    ///
+    /// Does not check subgroup membership - use [`new_in_subgroup`](Self::new_in_subgroup) for
+    /// that. For curves with cofactor 1, `new` and `new_in_subgroup` are equivalent.
+    pub fn new(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
+        let p = Self::from_xy(x, y);
+        if p.is_on_curve() { Some(p) } else { None }
+    }
+
+    /// Creates a point from coordinates, returning `None` if the point is not on the curve or
+    /// not in the correct subgroup.
+    pub fn new_in_subgroup(x: BaseField<C, N>, y: BaseField<C, N>) -> Option<Self> {
+        let p = Self::new(x, y)?;
+        if p.is_in_correct_subgroup() { Some(p) } else { None }
+    }
+
+    /// Checks whether `(x, y)` satisfies the curve equation `y² = x³ + ax + b`.
+    #[must_use]
+    pub fn is_on_curve(&self) -> bool {
+        let Some((x, y)) = self.xy_unverified() else {
+            return true; // identity is on every curve
+        };
+
+        let lhs = y * y;
+        let mut rhs = x * x;
+        Self::add_a(&mut rhs);
+        rhs *= x;
+        rhs += C::COEFF_B.as_unverified();
+        lhs.check_is_eq(&rhs)
+    }
+
+    /// Adds [`COEFF_A`](CurveConfig::COEFF_A) in place, skipped at compile time when `a == 0`.
+    #[inline(always)]
+    fn add_a(val: &mut UnverifiedFp<C::BaseFieldConfig, N>) {
+        if !C::COEFF_A.is_zero() {
+            *val += C::COEFF_A.as_unverified();
+        }
+    }
+
+    /// Computes the curve RHS `x³ + ax + b` for a given x-coordinate.
+    #[inline]
+    fn curve_rhs(x: &UnverifiedFp<C::BaseFieldConfig, N>) -> UnverifiedFp<C::BaseFieldConfig, N> {
+        let mut rhs = x * x;
+        Self::add_a(&mut rhs);
+        rhs *= x;
+        rhs += C::COEFF_B.as_unverified();
+        rhs
+    }
+
     /// Returns the two y-coordinates on the curve for the given `x`, or `None` if no point
     /// with that x-coordinate exists. Returns `(y_even, y_odd)`.
     ///
     /// The corresponding points are on the curve but not necessarily in the prime-order
     /// subgroup.
-    pub fn ys_from_x(x: impl AsRef<UnverifiedFp<P, N>>) -> Option<(Fp<P, N>, Fp<P, N>)> {
+    pub fn ys_from_x(
+        x: impl AsRef<UnverifiedFp<C::BaseFieldConfig, N>>,
+    ) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
         // y² = x³ + ax + b
         let x = x.as_ref();
         let y = Self::curve_rhs(x).sqrt()?.check();
@@ -503,7 +534,7 @@ impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>
     /// with that x-coordinate exists.
     ///
     /// The returned point is on the curve but not necessarily in the prime-order subgroup.
-    pub fn decompress(x: Fp<P, N>, is_y_odd: bool) -> Option<Self> {
+    pub fn decompress(x: BaseField<C, N>, is_y_odd: bool) -> Option<Self> {
         let (y_even, y_odd) = Self::ys_from_x(x)?;
         Some(Self::from_xy(x, if is_y_odd { y_odd } else { y_even }))
     }
@@ -773,7 +804,7 @@ mod wycheproof {
 
     /// Parses a SEC1-encoded EC point (uncompressed or compressed). Returns `None` for invalid
     /// encodings, off-curve points, or points not in the prime-order subgroup.
-    fn parse_point<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>(
+    fn parse_point<C: PrimeCurveConfig<N>, const N: usize>(
         bytes: &[u8],
     ) -> Option<AffinePoint<C, N>> {
         let prefix = *bytes.first()?;
@@ -795,19 +826,13 @@ mod wycheproof {
     }
 
     /// Runs Wycheproof ECDH EcPoint tests as scalar multiplication tests.
-    fn run_scalar_mul_tests<
-        P: FieldConfig<N>,
-        C: CurveConfig<N, BaseField = Fp<P, N>>,
-        const N: usize,
-    >(
-        name: TestName,
-    ) {
+    fn run_scalar_mul_tests<C: PrimeCurveConfig<N>, const N: usize>(name: TestName) {
         let test_set = TestSet::load(name).unwrap();
 
         for group in &test_set.test_groups {
             for tc in &group.tests {
                 let result = (|| {
-                    let point = parse_point::<P, C, N>(&tc.public_key)?;
+                    let point = parse_point::<C, N>(&tc.public_key)?;
                     let key_start = tc.private_key.iter().position(|&b| b != 0).unwrap_or(0);
                     let key = &tc.private_key[key_start..];
                     if key.len() > N * 4 {
@@ -837,19 +862,13 @@ mod wycheproof {
 
     #[test]
     fn secp256r1() {
-        run_scalar_mul_tests::<
-            crate::curves::secp256r1::FqConfig,
-            crate::curves::secp256r1::Config,
-            8,
-        >(TestName::EcdhSecp256r1Ecpoint);
+        run_scalar_mul_tests::<crate::curves::secp256r1::Config, 8>(TestName::EcdhSecp256r1Ecpoint);
     }
 
     #[test]
     fn secp384r1() {
-        run_scalar_mul_tests::<
-            crate::curves::secp384r1::FqConfig,
-            crate::curves::secp384r1::Config,
-            12,
-        >(TestName::EcdhSecp384r1Ecpoint);
+        run_scalar_mul_tests::<crate::curves::secp384r1::Config, 12>(
+            TestName::EcdhSecp384r1Ecpoint,
+        );
     }
 }

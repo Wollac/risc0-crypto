@@ -68,7 +68,7 @@
 //!
 //! Nonce reuse or predictable nonces leak the private key.
 
-use crate::{AffinePoint, CurveConfig, FieldConfig, Fp, curve::ScalarField};
+use crate::{AffinePoint, CurveConfig, FieldConfig, Fp, PrimeCurveConfig, curve::ScalarField};
 
 /// An ECDSA signature `(r, s)` over curve `C`.
 #[derive(educe::Educe)]
@@ -125,7 +125,9 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
 
 // --- ECDSA sign/verify requires prime-field base coordinates ---
 
-impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize> Signature<C, N> {
+impl<P: FieldConfig<N>, C: PrimeCurveConfig<N, BaseFieldConfig = P>, const N: usize>
+    Signature<C, N>
+{
     /// Signs a message hash with private key `d` and nonce `k`.
     ///
     /// `hash` is the big-endian digest output (e.g. SHA-256), reduced mod n to produce the scalar
@@ -289,7 +291,7 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
 
 // --- RecoverableSignature sign/verify/recover requires prime-field base coordinates ---
 
-impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>
+impl<P: FieldConfig<N>, C: PrimeCurveConfig<N, BaseFieldConfig = P>, const N: usize>
     RecoverableSignature<C, N>
 {
     /// Signs a message hash with private key `d` and nonce `k`, producing a recoverable
@@ -358,7 +360,7 @@ impl<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>
 type SignRaw<P, C, const N: usize> = (ScalarField<C, N>, ScalarField<C, N>, Fp<P, N>, Fp<P, N>);
 
 /// Core ECDSA signing computation. Returns `(r, s, R.x, R.y)`. Panics if `k` is zero.
-fn sign_raw<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>(
+fn sign_raw<P: FieldConfig<N>, C: PrimeCurveConfig<N, BaseFieldConfig = P>, const N: usize>(
     d: &ScalarField<C, N>,
     k: &ScalarField<C, N>,
     hash: &[u8],
@@ -389,7 +391,11 @@ fn sign_raw<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N:
 }
 
 /// Interprets a base field element as a scalar, reducing mod n.
-fn base_to_scalar<P: FieldConfig<N>, C: CurveConfig<N, BaseField = Fp<P, N>>, const N: usize>(
+fn base_to_scalar<
+    P: FieldConfig<N>,
+    C: PrimeCurveConfig<N, BaseFieldConfig = P>,
+    const N: usize,
+>(
     x: Fp<P, N>,
 ) -> ScalarField<C, N> {
     const {
@@ -591,7 +597,7 @@ mod wycheproof {
 
     fn run_verify_tests<
         P: FieldConfig<N>,
-        C: CurveConfig<N, BaseField = Fp<P, N>>,
+        C: PrimeCurveConfig<N, BaseFieldConfig = P>,
         D: Digest,
         const N: usize,
     >(

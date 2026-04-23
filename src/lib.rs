@@ -57,7 +57,7 @@ pub const LIMBS_256: usize = 8;
 pub const LIMBS_384: usize = 12;
 
 pub use bigint::BigInt;
-pub use curve::{AffinePoint, Coords, CurveConfig, CurveOps, R0VMCurveOps};
+pub use curve::{AffinePoint, Coords, CurveConfig, CurveOps, PrimeCurveConfig, R0VMCurveOps};
 pub use field::{
     Field, FieldConfig, FieldOps, Fp, Fp256, Fp384, PrimeField, R0VMFieldOps, UnverifiedField,
     UnverifiedFp,
