@@ -28,16 +28,12 @@ use risc0_crypto::{
 /// normalization, so both low-S and high-S inputs recover the same address.
 #[inline]
 pub fn secp256k1_ecrecover(sig: &[u8; 64], recid: u8, msg: &[u8; 32]) -> Option<Address> {
-    // Signature (r, s) - both must be canonical scalars in [1, n).
     let r = secp256k1::Fr::from_bigint(BigInt::<8>::from_be_bytes(&sig[..32]))?;
     let s = secp256k1::Fr::from_bigint(BigInt::<8>::from_be_bytes(&sig[32..]))?;
     let signature = Signature::<secp256k1::Config, 8>::new(r, s)?;
 
     let recovery_id = RecoveryId::from_byte(recid)?;
-    let rsig = RecoverableSignature::new(signature, recovery_id);
-
-    // EIP-2: accept either low-S or high-S; recover the canonical address.
-    let rsig = rsig.normalized_s();
+    let rsig = RecoverableSignature::new(signature, recovery_id).normalized_s();
 
     let pubkey = rsig.recover(msg)?;
     let (x, y) = pubkey.xy()?;

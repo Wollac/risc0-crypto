@@ -17,18 +17,5 @@ getrandom = { version = "0.2", features = ["custom"] }
 num-bigint = { version = "0.4", default-features = false }
 rstest = { version = "0.26", default-features = false }
 
-[lints.rust]
-rust-2018-idioms = "deny"
-unreachable-pub = "warn"
-unused-must-use = "deny"
-
-[lints.rustdoc]
-all = "warn"
-
-[lints.clippy]
-use-self = "warn"
-missing-const-for-fn = "warn"
-redundant-clone = "warn"
-dbg-macro = "warn"
-uninlined-format-args = "warn"
-manual-string-new = "warn"
+[lints]
+workspace = true

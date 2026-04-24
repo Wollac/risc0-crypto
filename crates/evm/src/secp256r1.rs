@@ -26,13 +26,10 @@ pub fn secp256r1_verify(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> bool {
 }
 
 fn verify_inner(msg: &[u8; 32], sig: &[u8; 64], pk: &[u8; 64]) -> Option<bool> {
-    // Signature (r, s) - both must be canonical scalars in [1, n).
     let r = secp256r1::Fr::from_bigint(BigInt::<8>::from_be_bytes(&sig[..32]))?;
     let s = secp256r1::Fr::from_bigint(BigInt::<8>::from_be_bytes(&sig[32..]))?;
     let signature = Signature::<secp256r1::Config, 8>::new(r, s)?;
 
-    // Public key (x, y) - both must be canonical base-field elements on the
-    // curve. `AffinePoint::new` rejects off-curve inputs including (0, 0).
     let x = secp256r1::Fq::from_bigint(BigInt::<8>::from_be_bytes(&pk[..32]))?;
     let y = secp256r1::Fq::from_bigint(BigInt::<8>::from_be_bytes(&pk[32..]))?;
     let pubkey = AffinePoint::<secp256r1::Config, 8>::new(x, y)?;

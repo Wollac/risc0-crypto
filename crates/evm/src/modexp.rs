@@ -56,15 +56,17 @@ where
     let base_bi = BigInt::<N>::from_be_bytes(base);
     let mod_bi = BigInt::<N>::from_be_bytes(modulus);
 
-    // EIP-198: zero modulus yields a zero-filled output of modulus length.
     if mod_bi.is_zero() {
         return Some(vec![0u8; modulus.len()]);
     }
 
     let result = modexp::modexp::<N>(&base_bi, &ByteExp(exp), &mod_bi);
 
-    let mut full = vec![0u8; N * 4];
-    result.write_be_bytes(&mut full);
+    // N*4 max is 512 (N=128, 4096-bit). Write through a stack scratch so we
+    // only heap-allocate the final modulus.len()-sized output.
+    let mut scratch = [0u8; 512];
+    let full = &mut scratch[..N * 4];
+    result.write_be_bytes(full);
     Some(full[N * 4 - modulus.len()..].to_vec())
 }
 

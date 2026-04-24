@@ -19,21 +19,8 @@ wycheproof = { version = "0.6", default-features = false, features = ["ecdh", "e
 [build-dependencies]
 cargo_metadata = "0.23.1"
 
-[lints.rust]
-rust-2018-idioms = "deny"
-unreachable-pub = "warn"
-unused-must-use = "deny"
-
-[lints.rustdoc]
-all = "warn"
-
-[lints.clippy]
-use-self = "warn"
-missing-const-for-fn = "warn"
-redundant-clone = "warn"
-dbg-macro = "warn"
-uninlined-format-args = "warn"
-manual-string-new = "warn"
+[lints]
+workspace = true
 
 [package.metadata.docs.rs]
 all-features = true
