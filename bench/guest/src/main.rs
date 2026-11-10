@@ -15,24 +15,64 @@ use risc0_zkvm::guest::env;
 
 risc0_zkvm::guest::entry!(main);
 
-/// Benchmark a block, logging cycle-start/end markers around it. Formatting (if any) happens before
-/// the timed region so it doesn't consume measured cycles.
+// What a benchmark measures
+//
+// Each benchmark reports the cycles of one call of the operation and nothing else:
+//
+// - The operation runs as a function of its own (`standalone`), with everything it calls inlined
+//   into it as usual. Its code therefore does not depend on what else this binary contains, and an
+//   unrelated change cannot move its number.
+// - Inputs go through `black_box` before the measured region, so the compiler cannot specialize the
+//   operation for them.
+// - Results are passed to `black_box` by reference. By value it would copy them, and a copy of more
+//   than eight words is a `memcpy` call that costs as much as a field operation.
+// - The cycles spent on the markers, and for `*N` benchmarks on the loop and the calls, are
+//   measured with an operation that does nothing (`calibrate`) and subtracted by the host.
+
+/// Measures `$body` between two cycle markers. The labels are formatted outside the region.
+///
+/// A label ending in `*N` tells the host that the region runs the operation `N` times; use
+/// [`repeat`] as the body.
 macro_rules! bench {
-    ($fmt:literal, $($args:expr),+ ; $body:expr) => {{
-        let __start = format!(concat!("cycle-start: ", $fmt), $($args),+);
-        let __end = format!(concat!("cycle-end: ", $fmt), $($args),+);
+    ($fmt:literal $(, $args:expr)* ; $body:expr) => {{
+        let __start = format!(concat!("cycle-start: ", $fmt) $(, $args)*);
+        let __end = format!(concat!("cycle-end: ", $fmt) $(, $args)*);
         env::log(&__start);
-        let _ = black_box($body);
+        let _ = black_box(&standalone(|| $body));
         env::log(&__end);
-    }};
-    ($label:literal ; $body:expr) => {{
-        env::log(concat!("cycle-start: ", $label));
-        let _ = black_box($body);
-        env::log(concat!("cycle-end: ", $label));
     }};
 }
 
+/// Runs `op` as a function of its own.
+///
+/// Never inlined, and instantiated separately for every `op`: the measured code is the operation
+/// compiled on its own. Nothing can be hoisted out of it when it is called in a loop.
+#[inline(never)]
+fn standalone<R>(op: impl FnOnce() -> R) -> R {
+    op()
+}
+
+/// Calls `op` as a [`standalone`] function [`BENCH_ITERS`] times.
+///
+/// Never inlined, so the loop compiles to the same code for every operation, including the one
+/// that does nothing in [`calibrate`].
+#[inline(never)]
+fn repeat<R>(op: impl Fn() -> R + Copy) {
+    for _ in 0..BENCH_ITERS {
+        let _ = black_box(&standalone(op));
+    }
+}
+
+/// Measures the harness itself. The host subtracts these from the other regions.
+fn calibrate() {
+    // an empty region: the markers and one call
+    bench!("harness/region"; black_box(()));
+    // a region that loops over an operation doing nothing: the markers, the loop and its calls
+    bench!("harness/call*{}", BENCH_ITERS; repeat(|| black_box(())));
+}
+
 fn main() {
+    calibrate();
     bench_ecrecover();
     bench_eip196();
     bench_eip2537();
@@ -68,6 +108,7 @@ fn bench_ecrecover() {
     );
     let recid: u8 = 0; // v = 27
     let msg = hex!("cdefda47615b9f7767dc9f08d679f563539428ead76a4f5004bef34296ca3a75");
+    let (sig, recid, msg) = (black_box(sig), black_box(recid), black_box(msg));
 
     bench!("ecrecover"; {
         ecrecover(&sig, recid, &msg)
@@ -121,6 +162,7 @@ fn bench_eip196() {
     );
     // scalar from an ecMul (0x07) precompile call in the same tx
     let scalar = hex!("22a7782a8db95c39edde875fbfcf6b3c469bec1096dc379e944508eec74d74ad");
+    let (p1, p2, scalar) = (black_box(p1), black_box(p2), black_box(scalar));
 
     bench!("eip196/add"; {
         bn254_g1_add(&p1, &p2)
@@ -183,6 +225,7 @@ fn bench_eip2537() {
         ),
     );
 
+    let (a, b) = (black_box(a), black_box(b));
     bench!("eip2537/add"; {
         bls12_381_g1_add(a, b)
     });
@@ -246,7 +289,7 @@ fn bls12_381_g1_msm(pairs: &[BlsG1PointScalar]) -> Option<[u8; 96]> {
 }
 
 fn bench_eip2537_msm() {
-    let pairs = eip2537_msm_setup();
+    let pairs = black_box(eip2537_msm_setup());
 
     for &k in &[1, 128] {
         bench!("eip2537/msm_{}", k; {
@@ -262,24 +305,11 @@ const BENCH_ITERS: u32 = 10;
 macro_rules! bench_field {
     ($name:expr, $Fq:ty, $val:expr) => {{
         let v: $Fq = $val;
+        let (a, b) = (black_box(&v), black_box(&v));
 
-        bench!("{}/add*{}", $name, BENCH_ITERS; {
-            for _ in 0..BENCH_ITERS {
-                let _ = black_box(black_box(&v) + black_box(&v));
-            }
-        });
-
-        bench!("{}/mul*{}", $name, BENCH_ITERS; {
-            for _ in 0..BENCH_ITERS {
-                let _ = black_box(black_box(&v) * black_box(&v));
-            }
-        });
-
-        bench!("{}/inverse*{}", $name, BENCH_ITERS; {
-            for _ in 0..BENCH_ITERS {
-                let _ = black_box(black_box(&v).inverse());
-            }
-        });
+        bench!("{}/add*{}", $name, BENCH_ITERS; repeat(move || a + b));
+        bench!("{}/mul*{}", $name, BENCH_ITERS; repeat(move || a * b));
+        bench!("{}/inverse*{}", $name, BENCH_ITERS; repeat(move || a.inverse()));
     }};
 }
 
@@ -302,21 +332,14 @@ fn bench_field_ops() {
 
 macro_rules! bench_ec {
     ($name:expr, $Affine:ty, $Fr:ty, $scalar:expr) => {{
-        let g = <$Affine>::GENERATOR;
-        let scalar: $Fr = $scalar;
+        let g = black_box(<$Affine>::GENERATOR);
+        let scalar: $Fr = black_box($scalar);
 
-        bench!("{}/is_on_curve*{}", $name, BENCH_ITERS; {
-            for _ in 0..BENCH_ITERS {
-                let _ = black_box(black_box(&g).is_on_curve());
-            }
-        });
+        let p2 = black_box(<$Affine>::GENERATOR.double());
+        let (a, b) = (black_box(&g), black_box(&p2));
 
-        let p2 = <$Affine>::GENERATOR.double();
-        bench!("{}/point_add*{}", $name, BENCH_ITERS; {
-            for _ in 0..BENCH_ITERS {
-                let _ = black_box(black_box(&g) + black_box(&p2));
-            }
-        });
+        bench!("{}/is_on_curve*{}", $name, BENCH_ITERS; repeat(move || a.is_on_curve()));
+        bench!("{}/point_add*{}", $name, BENCH_ITERS; repeat(move || a + b));
 
         bench!("{}/scalar_mul", $name; {
             &g * &scalar
@@ -326,18 +349,18 @@ macro_rules! bench_ec {
 
 macro_rules! bench_ecdsa {
     ($name:expr, $Config:ty, $Fr:ty, $Affine:ty, $N:expr, $d:expr, $k:expr) => {{
-        let d: $Fr = $d;
-        let k: $Fr = $k;
-        let hash: &[u8] = &[0xde, 0xad, 0xbe, 0xef];
+        let d: $Fr = black_box($d);
+        let k: $Fr = black_box($k);
+        let hash: &[u8] = black_box(&[0xde, 0xad, 0xbe, 0xef]);
         // precompute pubkey (not timed)
-        let pubkey = &<$Affine>::GENERATOR * &d;
+        let pubkey = black_box(&<$Affine>::GENERATOR * &d);
 
         bench!("{}/ecdsa_sign", $name; {
             Signature::<$Config, $N>::sign(&d, &k, hash).unwrap()
         });
 
         let sig =
-            RecoverableSignature::<$Config, $N>::sign(&d, &k, hash).unwrap();
+            black_box(RecoverableSignature::<$Config, $N>::sign(&d, &k, hash).unwrap());
 
         bench!("{}/ecdsa_verify", $name; {
             sig.verify(&pubkey, hash)
@@ -389,16 +412,20 @@ fn bench_ec_ops() {
 
 fn bench_modexp() {
     // exponents with every other bit set, full width for 256/384-bit
-    let exp_256 = BigInt([0xaaaaaaaa; 8]);
-    let exp_384 = BigInt([0xaaaaaaaa; 12]);
+    let exp_256 = black_box(BigInt([0xaaaaaaaa; 8]));
+    let exp_384 = black_box(BigInt([0xaaaaaaaa; 12]));
+    let (base_256, mod_256) =
+        (black_box(BigInt::from_u32(2)), black_box(secp256r1::FqConfig::MODULUS));
+    let (base_384, mod_384) =
+        (black_box(BigInt::from_u32(2)), black_box(secp384r1::FqConfig::MODULUS));
 
     // 256-bit: secp256r1 field prime
     bench!("modexp/256bit"; {
-        modexp(&BigInt::from_u32(2), &exp_256, &secp256r1::FqConfig::MODULUS)
+        modexp(&base_256, &exp_256, &mod_256)
     });
     // 384-bit: secp384r1 field prime
     bench!("modexp/384bit"; {
-        modexp(&BigInt::from_u32(2), &exp_384, &secp384r1::FqConfig::MODULUS)
+        modexp(&base_384, &exp_384, &mod_384)
     });
 
     // RSA-4096 verify from mainnet tx 0x956bcca6c59705ea68bdfbf4aadebbd2cd213fd550c0b28ef711337e18a3faf6
@@ -408,7 +435,8 @@ fn bench_modexp() {
     let mod_4096 = BigInt::<128>::from_be_bytes(&hex!(
         "be82ed99849edfaebd403ab2acf6f4ec93e8070f0603c20210ac7601ccee90de611e15d81befd561149a5673bc8ff5982be2d07d92d8737d54b45b90f0f270e701ce6f1d5036f8838accfbf59a6d34539107914ebca64572524ad5443c778a951b8c5c4c8dd8d96ef7b408b97aa7c0ecfed1a1ded4b376197d952968fee2a6d2dd97579e44b971289bba4ab52a3c1964e16f3ff3c304930821a9bca3ee7ed229ea8f335550cce599e6d6e0b510494639d385eb0c05bb1abdfca6f232f5ac08762f12fab004aa7a663a61974dfb0c2da5f7a50b3114ced5bd6af54edee131a9807cd45cc87c589dd48f93aaf2d1579a5dc2dca7a2efc76be44eb879caf4898940c401d51814dd2ed394e0d901f30d1f1970e85804985759f862f75f8de13fcab2ba9e3f25f8b5b3411f466bbe14a611c1abe961ee9a76f23662cd3382d6e6327cec5b353e06eb1f4ea20734fac638d2e6bfcd80ba53c5eeccdb1c029e9d4d0e83611217da03501ef01417e4b4ae131193b51f25790fc0140fc74a17a9f95098e4724134d82f0a23829e5897877968a284acae4066e342b99c4a44611d140a9d2f8cb79d21d379996fc6088d76f69572042ba3405393e85f363d5cde71c6d230a8e9700d48c8801b402520b312674259bc1e9a53e065034aaf1421c71db360149f84977f7a650d1bdd2c8de1d5acbcb907f4212358d00db18aa75121ddffd32b31"
     ));
-    let exp_e = BigInt::<1>::from_u32(65537);
+    let exp_e = black_box(BigInt::<1>::from_u32(65537));
+    let (base_4096, mod_4096) = (black_box(base_4096), black_box(mod_4096));
     bench!("modexp/4096bit_e65537"; {
         modexp(&base_4096, &exp_e, &mod_4096)
     });

@@ -9,8 +9,8 @@ use thousands::Separable;
 
 /// Matches cycle markers: `R0VM[{cycle}] cycle-(start|end): {topic}`
 ///
-/// Topics may carry an iteration suffix `*N` (e.g. `field/secp256k1/mul*10`).
-/// When present the host divides the total cycles by N and displays the per-op cost.
+/// Topics may carry an iteration suffix `*N` (e.g. `field/secp256k1/mul*10`), meaning the region
+/// ran its operation N times.
 static CYCLE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"R0VM\[(\d+)\] cycle-(start|end): (.+)").unwrap());
 
@@ -31,7 +31,7 @@ fn main() -> anyhow::Result<()> {
     let _ = default_executor().execute(env, GUEST_ELF)?;
     let stdout = String::from_utf8(out).context("guest stdout was not valid UTF-8")?;
 
-    let results = parse_results(&stdout)?;
+    let results = to_results(&parse_regions(&stdout)?)?;
     print_table(&results);
 
     if let Some(path) = json_path {
@@ -48,8 +48,23 @@ fn parse_json_flag() -> Option<String> {
     args.windows(2).find(|w| w[0] == "--json").map(|w| w[1].clone())
 }
 
+/// The guest's empty region: what the two markers and one call cost.
+const HARNESS_REGION: &str = "harness/region";
+/// The guest's region looping over an operation that does nothing: the markers, the loop and its
+/// calls.
+const HARNESS_CALL: &str = "harness/call";
+
+/// A region the guest measured.
+struct Region<'a> {
+    name: &'a str,
+    /// How many times the region ran its operation.
+    iters: u64,
+    /// Cycles between its two markers.
+    cycles: u64,
+}
+
 /// Splits a topic like `"field/secp256k1/mul*10"` into `("field/secp256k1/mul", 10)`.
-/// Topics without `*N` return a divisor of 1.
+/// Topics without `*N` return an iteration count of 1.
 fn parse_topic(topic: &str) -> (&str, u64) {
     match topic.rsplit_once('*') {
         Some((name, n)) => match n.parse::<u64>() {
@@ -60,10 +75,10 @@ fn parse_topic(topic: &str) -> (&str, u64) {
     }
 }
 
-/// Parse guest stdout into structured benchmark results.
-fn parse_results(out: &str) -> anyhow::Result<Vec<BenchResult>> {
+/// Parses the regions out of the guest's stdout, in the order they ended.
+fn parse_regions(out: &str) -> anyhow::Result<Vec<Region<'_>>> {
     let mut starts: HashMap<&str, u64> = HashMap::new();
-    let mut results = Vec::new();
+    let mut regions = Vec::new();
 
     for (_, [cycle_count, cmd, topic]) in CYCLE_RE.captures_iter(out).map(|c| c.extract()) {
         let cycle_count: u64 = cycle_count.parse()?;
@@ -73,12 +88,8 @@ fn parse_results(out: &str) -> anyhow::Result<Vec<BenchResult>> {
             }
             "end" => {
                 if let Some(start) = starts.remove(topic) {
-                    let (name, divisor) = parse_topic(topic);
-                    results.push(BenchResult {
-                        name: name.to_string(),
-                        unit: "cycles",
-                        value: (cycle_count - start) / divisor,
-                    });
+                    let (name, iters) = parse_topic(topic);
+                    regions.push(Region { name, iters, cycles: cycle_count - start });
                 }
             }
             _ => unreachable!(),
@@ -89,7 +100,51 @@ fn parse_results(out: &str) -> anyhow::Result<Vec<BenchResult>> {
         eprintln!("warning: unmatched start for {topic}");
     }
 
+    Ok(regions)
+}
+
+/// Turns the measured regions into the cycles of one operation each.
+///
+/// A region costs more than its operations: the markers and one call around a single-shot
+/// region, the markers, the loop and its calls around a `*N` region. The guest measures both
+/// with an operation that does nothing, and that is subtracted here. The two harness regions
+/// are reported as well, so a change in the harness itself shows up.
+fn to_results(regions: &[Region<'_>]) -> anyhow::Result<Vec<BenchResult>> {
+    let find = |name| {
+        regions
+            .iter()
+            .find(|r| r.name == name)
+            .with_context(|| format!("the guest did not measure `{name}`"))
+    };
+    let (region, call) = (find(HARNESS_REGION)?, find(HARNESS_CALL)?);
+
+    let mut results = Vec::new();
+    for r in regions {
+        let value = if r.name == HARNESS_REGION {
+            r.cycles
+        } else if r.name == HARNESS_CALL {
+            div_round(r.cycles.saturating_sub(region.cycles), r.iters)
+        } else if r.iters > 1 {
+            anyhow::ensure!(
+                r.iters == call.iters,
+                "`{}` runs {} iterations, but `{HARNESS_CALL}` was measured with {}",
+                r.name,
+                r.iters,
+                call.iters
+            );
+            div_round(r.cycles.saturating_sub(call.cycles), r.iters)
+        } else {
+            r.cycles.saturating_sub(region.cycles)
+        };
+        results.push(BenchResult { name: r.name.to_string(), unit: "cycles", value });
+    }
+
     Ok(results)
+}
+
+/// Divides, rounding to nearest.
+fn div_round(n: u64, d: u64) -> u64 {
+    (n + d / 2) / d
 }
 
 /// Render results as a human-readable table with grouping.
