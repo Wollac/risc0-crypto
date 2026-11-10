@@ -115,7 +115,7 @@ fn to_results(regions: &[Region<'_>]) -> anyhow::Result<Vec<BenchResult>> {
         let value = if r.name == HARNESS_REGION {
             r.cycles
         } else if r.name == HARNESS_CALL {
-            div_round(r.cycles.saturating_sub(region.cycles), r.iters)
+            r.cycles.saturating_sub(region.cycles) / r.iters
         } else if r.iters > 1 {
             anyhow::ensure!(
                 r.iters == call.iters,
@@ -124,7 +124,7 @@ fn to_results(regions: &[Region<'_>]) -> anyhow::Result<Vec<BenchResult>> {
                 r.iters,
                 call.iters
             );
-            div_round(r.cycles.saturating_sub(call.cycles), r.iters)
+            r.cycles.saturating_sub(call.cycles) / r.iters
         } else {
             r.cycles.saturating_sub(region.cycles)
         };
@@ -132,11 +132,6 @@ fn to_results(regions: &[Region<'_>]) -> anyhow::Result<Vec<BenchResult>> {
     }
 
     Ok(results)
-}
-
-/// Divide, rounding to nearest.
-fn div_round(n: u64, d: u64) -> u64 {
-    (n + d / 2) / d
 }
 
 /// Render results as a human-readable table with grouping.
