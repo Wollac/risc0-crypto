@@ -15,24 +15,9 @@ use risc0_zkvm::guest::env;
 
 risc0_zkvm::guest::entry!(main);
 
-// What a benchmark measures
-//
-// Each benchmark reports the cycles of one call of the operation and nothing else:
-//
-// - The operation runs as a function of its own (`standalone`), with everything it calls inlined
-//   into it as usual. Its code therefore does not depend on what else this binary contains, and an
-//   unrelated change cannot move its number.
-// - Inputs go through `black_box` before the measured region, so the compiler cannot specialize the
-//   operation for them.
-// - Results are passed to `black_box` by reference. By value it would copy them, and a copy of more
-//   than eight words is a `memcpy` call that costs as much as a field operation.
-// - The cycles spent on the markers, and for `*N` benchmarks on the loop and the calls, are
-//   measured with an operation that does nothing (`calibrate`) and subtracted by the host.
-
-/// Measures `$body` between two cycle markers. The labels are formatted outside the region.
-///
-/// A label ending in `*N` tells the host that the region runs the operation `N` times; use
-/// [`repeat`] as the body.
+/// Benchmark a block, logging cycle-start/end markers around it. Formatting happens before the
+/// timed region so it doesn't consume measured cycles. The block runs as a [`standalone`] function
+/// and its result is black-boxed by reference, so it is never copied.
 macro_rules! bench {
     ($fmt:literal $(, $args:expr)* ; $body:expr) => {{
         let __start = format!(concat!("cycle-start: ", $fmt) $(, $args)*);
@@ -43,19 +28,13 @@ macro_rules! bench {
     }};
 }
 
-/// Runs `op` as a function of its own.
-///
-/// Never inlined, and instantiated separately for every `op`: the measured code is the operation
-/// compiled on its own. Nothing can be hoisted out of it when it is called in a loop.
+/// Runs `op` as its own function, so its code doesn't depend on the rest of the binary.
 #[inline(never)]
 fn standalone<R>(op: impl FnOnce() -> R) -> R {
     op()
 }
 
-/// Calls `op` as a [`standalone`] function [`BENCH_ITERS`] times.
-///
-/// Never inlined, so the loop compiles to the same code for every operation, including the one
-/// that does nothing in [`calibrate`].
+/// Runs `op` [`BENCH_ITERS`] times, each as a [`standalone`] call.
 #[inline(never)]
 fn repeat<R>(op: impl Fn() -> R + Copy) {
     for _ in 0..BENCH_ITERS {
@@ -63,11 +42,11 @@ fn repeat<R>(op: impl Fn() -> R + Copy) {
     }
 }
 
-/// Measures the harness itself. The host subtracts these from the other regions.
+/// Measures the harness overhead, which the host subtracts from all other results.
 fn calibrate() {
-    // an empty region: the markers and one call
+    // markers and one call
     bench!("harness/region"; black_box(()));
-    // a region that loops over an operation doing nothing: the markers, the loop and its calls
+    // markers, loop and calls
     bench!("harness/call*{}", BENCH_ITERS; repeat(|| black_box(())));
 }
 

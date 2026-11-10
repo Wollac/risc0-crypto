@@ -9,8 +9,8 @@ use thousands::Separable;
 
 /// Matches cycle markers: `R0VM[{cycle}] cycle-(start|end): {topic}`
 ///
-/// Topics may carry an iteration suffix `*N` (e.g. `field/secp256k1/mul*10`), meaning the region
-/// ran its operation N times.
+/// Topics may carry an iteration suffix `*N` (e.g. `field/secp256k1/mul*10`).
+/// When present the host divides the total cycles by N and displays the per-op cost.
 static CYCLE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"R0VM\[(\d+)\] cycle-(start|end): (.+)").unwrap());
 
@@ -48,23 +48,20 @@ fn parse_json_flag() -> Option<String> {
     args.windows(2).find(|w| w[0] == "--json").map(|w| w[1].clone())
 }
 
-/// The guest's empty region: what the two markers and one call cost.
+/// Harness overhead of a single-shot region, measured by the guest.
 const HARNESS_REGION: &str = "harness/region";
-/// The guest's region looping over an operation that does nothing: the markers, the loop and its
-/// calls.
+/// Harness overhead of a `*N` region, measured by the guest.
 const HARNESS_CALL: &str = "harness/call";
 
-/// A region the guest measured.
+/// A measured region: `cycles` between its markers for `iters` runs of the operation.
 struct Region<'a> {
     name: &'a str,
-    /// How many times the region ran its operation.
     iters: u64,
-    /// Cycles between its two markers.
     cycles: u64,
 }
 
 /// Splits a topic like `"field/secp256k1/mul*10"` into `("field/secp256k1/mul", 10)`.
-/// Topics without `*N` return an iteration count of 1.
+/// Topics without `*N` return a divisor of 1.
 fn parse_topic(topic: &str) -> (&str, u64) {
     match topic.rsplit_once('*') {
         Some((name, n)) => match n.parse::<u64>() {
@@ -75,7 +72,7 @@ fn parse_topic(topic: &str) -> (&str, u64) {
     }
 }
 
-/// Parses the regions out of the guest's stdout, in the order they ended.
+/// Parse guest stdout into measured regions.
 fn parse_regions(out: &str) -> anyhow::Result<Vec<Region<'_>>> {
     let mut starts: HashMap<&str, u64> = HashMap::new();
     let mut regions = Vec::new();
@@ -103,12 +100,7 @@ fn parse_regions(out: &str) -> anyhow::Result<Vec<Region<'_>>> {
     Ok(regions)
 }
 
-/// Turns the measured regions into the cycles of one operation each.
-///
-/// A region costs more than its operations: the markers and one call around a single-shot
-/// region, the markers, the loop and its calls around a `*N` region. The guest measures both
-/// with an operation that does nothing, and that is subtracted here. The two harness regions
-/// are reported as well, so a change in the harness itself shows up.
+/// Convert regions into per-op results, subtracting the harness overhead measured by the guest.
 fn to_results(regions: &[Region<'_>]) -> anyhow::Result<Vec<BenchResult>> {
     let find = |name| {
         regions
@@ -142,7 +134,7 @@ fn to_results(regions: &[Region<'_>]) -> anyhow::Result<Vec<BenchResult>> {
     Ok(results)
 }
 
-/// Divides, rounding to nearest.
+/// Divide, rounding to nearest.
 fn div_round(n: u64, d: u64) -> u64 {
     (n + d / 2) / d
 }

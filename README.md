@@ -23,9 +23,8 @@ Run locally with `rzup r0vm` installed:
 cargo run --release --manifest-path bench/Cargo.toml
 ```
 
-Each number is the cycle count of one call of the operation, compiled as a function of its own.
-The cost of the measurement itself (markers, loop, call) is measured with an operation that does
-nothing and subtracted; it is reported as `harness/region` and `harness/call`.
+Each number is the cycle count of one call of the operation. The harness overhead is measured
+(`harness/*`) and subtracted.
 
 Live benchmark tracking:
 [risc0-crypto benchmarks](https://wollac.github.io/risc0-crypto/dev/bench/).
