@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794348063490,
+  "lastUpdate": 1794352848759,
   "repoUrl": "https://github.com/Wollac/risc0-crypto",
   "entries": {
     "risc0-crypto benchmarks": [
@@ -635,6 +635,165 @@ window.BENCHMARK_DATA = {
           {
             "name": "modexp/4096bit_e65537",
             "value": 10370,
+            "unit": "cycles"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "welzwo@gmail.com",
+            "name": "Wolfgang Welz",
+            "username": "Wollac"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "5eeb3d06e33ad07d1d9f4c43f1a3b0fa04febaaf",
+          "message": "bench: measure only the operation, stable against unrelated changes (#21)\n\n* bench: measure only the operation, stable against unrelated changes\n\nThe benchmarks reported more than the operation and were sensitive to\ncode they do not exercise:\n\n- An empty region already cost 63 cycles for its two markers. The\n  per-op loops added about 6 more per iteration for the loop and the\n  input `black_box`es.\n- Results went to `black_box` by value, which copies them. For a curve\n  point that is a `memcpy` costing as much as the addition itself:\n  `point_add` read 350 cycles where the operation takes about 198.\n- Inputs were compile-time constants, so the compiler specialized the\n  operations for them (opaque inputs: ecrecover +1.5%, modexp/256bit\n  +6.3%).\n- Everything was inlined into `main`, so unrelated changes shifted\n  register allocation and code layout in other benchmarks. Edits to\n  other benchmarks moved `field/secp384r1/add` by 4.6%, and the library\n  change of #20 moved `field/secp384r1/mul` past the 1% alert.\n\nNow each benchmark body runs as a non-inlined function of its own\n(`standalone`), takes its inputs through `black_box`, and has its\nresult kept alive by reference. The guest also measures a region and a\nloop around an operation that does nothing; the host subtracts those,\nso what remains is one call of the operation. The two harness regions\nare reported as `harness/region` and `harness/call`.\n\nWith this harness, the library change of #20 moves only the two\nBLS12-381 MSM benchmarks; every other number is identical before and\nafter.\n\nThe numbers change once with this commit, in both directions, because\nthey now mean something slightly different.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* bench: shorten the harness comments\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* bench: drop the rounding helper\n\nPlain integer division, as before this branch.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* bench: measure one call per benchmark, markers out of line\n\nSimplify the harness after review:\n\n- The markers now sit in a non-inlined `measure`, so the code between\n  them no longer depends on where in `main` a benchmark is. Reordering\n  the benchmarks used to move a dozen results by a cycle; it now moves\n  none.\n- With that, the per-op benchmarks no longer need a loop: each runs the\n  operation once. `repeat`, `BENCH_ITERS`, the `*N` label suffix and\n  the second calibration region are gone.\n- One `harness` region measures the overhead. The host subtracts it,\n  errors if it is missing, and no longer reports it as a benchmark, so\n  a one-cycle change in the harness cannot trip the CI alert.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T15:18:20-08:00",
+          "tree_id": "41ee00c190a0a7f2f9f9872931fa7fc233e10d2e",
+          "url": "https://github.com/Wollac/risc0-crypto/commit/5eeb3d06e33ad07d1d9f4c43f1a3b0fa04febaaf"
+        },
+        "date": 1794352848450,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "ecrecover",
+            "value": 117117,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip196/add",
+            "value": 2219,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip196/mul",
+            "value": 71254,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/add",
+            "value": 3047,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/msm_1",
+            "value": 187820,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/msm_128",
+            "value": 18365331,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/add",
+            "value": 86,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/mul",
+            "value": 94,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/inverse",
+            "value": 102,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/add",
+            "value": 145,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/mul",
+            "value": 157,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/inverse",
+            "value": 169,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/is_on_curve",
+            "value": 375,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/point_add",
+            "value": 197,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/scalar_mul",
+            "value": 68085,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_sign",
+            "value": 67458,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_verify",
+            "value": 83778,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_recover",
+            "value": 103678,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/is_on_curve",
+            "value": 460,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/point_add",
+            "value": 258,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/scalar_mul",
+            "value": 107097,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_sign",
+            "value": 105836,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_verify",
+            "value": 167660,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_recover",
+            "value": 227331,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/256bit",
+            "value": 27261,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/384bit",
+            "value": 49653,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/4096bit_e65537",
+            "value": 10046,
             "unit": "cycles"
           }
         ]
