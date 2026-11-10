@@ -83,7 +83,9 @@ pub struct Signature<C: CurveConfig<N>, const N: usize> {
 }
 
 impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
-    /// Creates a signature from `(r, s)` components. Returns `None` if either is zero.
+    /// Creates a signature from `(r, s)` components.
+    ///
+    /// Returns `None` if either component is zero.
     #[inline]
     pub const fn new(r: ScalarField<C, N>, s: ScalarField<C, N>) -> Option<Self> {
         if r.is_zero() || s.is_zero() {
@@ -159,6 +161,7 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     }
 
     /// Normalizes into "low S" form as described in [BIP 0062: Dealing with Malleability][1].
+    ///
     /// Returns `None` if already normalized.
     ///
     /// [1]: https://github.com/bitcoin/bips/blob/master/bip-0062.mediawiki
@@ -201,7 +204,9 @@ impl RecoveryId {
         Self((is_x_reduced as u8) << 1 | is_y_odd as u8)
     }
 
-    /// Creates a recovery ID from a raw byte. Returns `None` if `byte > 3`.
+    /// Creates a recovery ID from a raw byte.
+    ///
+    /// Returns `None` if `byte > 3`.
     #[inline]
     pub const fn from_byte(byte: u8) -> Option<Self> {
         if byte > 3 { None } else { Some(Self(byte)) }
@@ -213,13 +218,13 @@ impl RecoveryId {
         self.0
     }
 
-    /// Was the y-coordinate of `R = [k]G` odd?
+    /// Returns `true` if the y-coordinate of `R = [k]G` was odd.
     #[inline]
     pub const fn is_y_odd(self) -> bool {
         self.0 & 1 != 0
     }
 
-    /// Did `R.x` exceed the scalar field order before reduction to produce `r`?
+    /// Returns `true` if `R.x` exceeded the scalar field order before reduction to produce `r`.
     #[inline]
     pub const fn is_x_reduced(self) -> bool {
         self.0 >> 1 != 0
@@ -359,8 +364,9 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
         Some(AffinePoint::double_scalar_mul(u1.check_ref(), &r_pt, u2.check_ref(), g_pt))
     }
 
-    /// Normalizes into "low S" form, adjusting the recovery ID accordingly. Returns `None` if
-    /// already normalized.
+    /// Normalizes into "low S" form, adjusting the recovery ID accordingly.
+    ///
+    /// Returns `None` if already normalized.
     pub fn normalize_s(&self) -> Option<Self> {
         let normalized = self.sig.normalize_s()?;
         Some(Self { sig: normalized, recovery_id: self.recovery_id.flip_y_parity() })

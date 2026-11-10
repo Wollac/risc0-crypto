@@ -209,11 +209,15 @@ fn bn254_g1_mul_happy_real_world() {
     assert_eq!(bn254_g1_mul(&point, &scalar).unwrap(), expected);
 }
 
+// The P-256 vectors below are the `ok_1`, `fail_invalid_sig` and `fail_invalid_pubkey` cases of
+// revm's secp256r1 precompile tests, which take them from
+// https://github.com/daimo-eth/p256-verifier/tree/master/test-vectors.
+
 #[rstest]
 #[rustfmt::skip]
-// daimo-eth `fail_invalid_sig` - r and s patched to all-ones (>= n).
+// revm `fail_invalid_sig` - r and s patched to all-ones (>= n).
 #[case::invalid_sig("4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4dffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff4aebd3099c618202fcfe16ae7770b0c49ab5eadf74b754204a3bb6060e44eff37618b065f9832de4ca6ca971a7a1adc826d0f7c00181a5fb2ddf79ae00b4e10e")]
-// daimo-eth `fail_invalid_pubkey` - pk mostly zero, (qx, qy) not on curve.
+// revm `fail_invalid_pubkey` - pk mostly zero, (qx, qy) not on curve.
 #[case::invalid_pubkey("4cee90eb86eaa050036147a12d49004b6b9c72bd725d39d4785011fe190f0b4da73bd4903f0ce3b639bbbf6e8e80d16931ff4bcf5993d58468e8fb19086e8cac36dbcd03009df8c59286b162af3bd7fcc0450c9aa81be5d10d312af6c66b1d6000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000")]
 fn secp256r1_verify_wrapper_rejects(#[case] input: Bytes) {
     let msg = input[..32].try_into().unwrap();
@@ -222,7 +226,7 @@ fn secp256r1_verify_wrapper_rejects(#[case] input: Bytes) {
     assert!(!secp256r1_verify(msg, sig, pk));
 }
 
-/// Happy path: daimo-eth P-256 verifier `ok_1` test vector.
+/// Happy path: revm `ok_1` test vector.
 #[test]
 fn secp256r1_verify_happy() {
     let input = hex!(

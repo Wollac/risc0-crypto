@@ -6,51 +6,110 @@ on:
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
+
+defaults:
+  run:
+    shell: bash
 
 env:
   CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: full
+  # Bump occasionally to pull in rustfmt/rustdoc improvements; keep within a few months.
+  NIGHTLY: nightly-2026-04-15
+  # risc0 commit to build cargo-risczero from: "Fix cargo risczero guest test", the head of
+  # risc0/risc0#3713 (formerly the branch victor/feb12-af1f67c8).
+  CARGO_RISCZERO_REV: 2d184364731643279835f281d9244a15c7149a06
 
 jobs:
-  check:
-    name: Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --workspace
-
   clippy:
     name: Clippy
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
+          toolchain: stable
           components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo clippy --workspace --lib -- -D warnings
+      - run: cargo clippy --workspace --all-targets -- -D warnings
 
   fmt:
     name: Format
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
+          toolchain: ${{ env.NIGHTLY }}
           components: rustfmt
-      - run: cargo +nightly fmt --all -- --check
+      - run: cargo +${{ env.NIGHTLY }} fmt --all -- --check
+
+  sort:
+    name: Cargo Sort
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
+      - uses: baptiste0928/cargo-install@8195d4f734a149db85385bb4102b42efcd373759 # v3.5.0
+        with:
+          crate: cargo-sort
+          version: "2.1"
+      - run: cargo sort --workspace --grouped --check
+
+  doc:
+    name: Doc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
+      - run: cargo doc --workspace --lib --no-deps
+        env:
+          RUSTDOCFLAGS: -D warnings
+
+  doctest:
+    name: Doc Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
+      - run: cargo test --doc --workspace
+
+  docs-rs:
+    name: docs.rs simulation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: ${{ env.NIGHTLY }}
+      - uses: baptiste0928/cargo-install@8195d4f734a149db85385bb4102b42efcd373759 # v3.5.0
+        with:
+          crate: cargo-docs-rs
+          version: "1.0"
+      - run: cargo +${{ env.NIGHTLY }} docs-rs -p risc0-crypto
+        env:
+          RUSTDOCFLAGS: -D warnings
+      - run: cargo +${{ env.NIGHTLY }} docs-rs -p risc0-crypto-evm
+        env:
+          RUSTDOCFLAGS: -D warnings
 
   test:
     name: Guest Test
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # building cargo-risczero on a cache miss takes about 45 minutes
+    timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
+        with:
+          toolchain: stable
 
       - name: Install rzup
         run: |
@@ -71,30 +130,21 @@ jobs:
           path: |
             ~/.cargo/bin/cargo-risczero
             ~/.cargo/bin/r0vm
-          key: cargo-risczero-victor-feb12-af1f67c8
+          key: cargo-risczero-${{ env.CARGO_RISCZERO_REV }}
 
-      - name: Install cargo-risczero from branch
+      # `cargo risczero guest test` needs the `experimental` feature, which the released binaries
+      # are built without.
+      - name: Install cargo-risczero from source
         if: steps.cache-risczero.outputs.cache-hit != 'true'
         run: >
           cargo install cargo-risczero
           --git https://github.com/risc0/risc0.git
-          --branch victor/feb12-af1f67c8
+          --rev ${{ env.CARGO_RISCZERO_REV }}
           --features experimental
           --force
 
       - name: Run guest tests
         run: cargo risczero guest test
-
-  doc:
-    name: Doc
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo doc --workspace --lib --no-deps
-        env:
-          RUSTDOCFLAGS: -D warnings
 
   bench:
     name: Benchmark
@@ -105,10 +155,9 @@ jobs:
       pull-requests: write
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: dtolnay/rust-toolchain@6d653acede28d24f02e3cd41383119e8b1b35921
         with:
-          workspaces: bench
+          toolchain: stable
 
       - name: Install rzup
         run: |
@@ -130,7 +179,7 @@ jobs:
           -- --json bench-results.json
 
       - name: Track benchmark results
-        uses: benchmark-action/github-action-benchmark@v1
+        uses: benchmark-action/github-action-benchmark@4322e5726e6334590d251fc4f92bec0efafc45dc # v1.22.2
         with:
           name: risc0-crypto benchmarks
           tool: customSmallerIsBetter

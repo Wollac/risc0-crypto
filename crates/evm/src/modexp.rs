@@ -20,7 +20,9 @@ use risc0_crypto::{
     modexp::{self, BitAccess, ModMul},
 };
 
-/// Computes `base^exp mod modulus`.
+/// Raises `base` to the power `exp`, modulo `modulus`.
+///
+/// On success, the returned vector is `modulus.len()` bytes, big-endian.
 ///
 /// Picks a 256-, 384-, or 4096-bit `modmul` backend based on `modulus.len()`:
 /// - `0` -> empty output
@@ -32,7 +34,7 @@ use risc0_crypto::{
 /// `base.len() > 512`) or when the modulus is wider than 4096 bits. Consumers
 /// fall through to their own default implementation on `None`.
 ///
-/// A zero modulus yields an output of length `modulus.len()` filled with zeros.
+/// A zero modulus yields an all-zero output.
 #[inline]
 pub fn modexp(base: &[u8], exp: &[u8], modulus: &[u8]) -> Option<Vec<u8>> {
     match modulus.len() {

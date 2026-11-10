@@ -27,9 +27,10 @@ pub fn bn254_g1_add(p1: &[u8], p2: &[u8]) -> Option<[u8; 64]> {
     Some(encode_point(&(&p1 + &p2)))
 }
 
-/// Multiplies a 64-byte G1 point by a big-endian scalar. The scalar is reduced
-/// mod `n` (the group order) before multiplication. Returns `None` for
-/// wrong-length input or an invalid point.
+/// Multiplies a 64-byte G1 point by a big-endian scalar.
+///
+/// The scalar is reduced mod `n` (the group order) before multiplication.
+/// Returns `None` for wrong-length input or an invalid point.
 #[inline]
 pub fn bn254_g1_mul(point: &[u8], scalar: &[u8]) -> Option<[u8; 64]> {
     let p = parse_point(point)?;

@@ -1,3 +1,8 @@
+//! Modular exponentiation for 256-, 384-, and 4096-bit integers.
+//!
+//! [`modexp`] raises `base` to the power `exp` modulo `modulus` via left-to-right
+//! square-and-multiply, with [`BitAccess`] abstracting the exponent encoding.
+
 use crate::BigInt;
 use risc0_bigint2::field::{modmul_256, modmul_384, modmul_4096, unchecked};
 
@@ -73,7 +78,7 @@ impl ModMul for [u32; 128] {
     }
 }
 
-/// Computes `base^exp mod modulus` using left-to-right square-and-multiply.
+/// Raises `base` to the power `exp`, modulo `modulus`, using left-to-right square-and-multiply.
 ///
 /// Returns [`BigInt::ZERO`] when `modulus` is one or [`BigInt::ONE`] when `exp` is zero.
 // TODO: a 4-bit sliding window would save ~50 multiplications per 256-bit exponent

@@ -90,8 +90,13 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
         Fp { inner: self.inner, _marker: PhantomData }
     }
 
-    /// Asserts the value is in `[0, p)` and returns a reference to the value as [`Fp`]. Panics
-    /// otherwise. Zero-cost - no copy, just a pointer cast.
+    /// Asserts the value is in `[0, p)` and returns a reference to the value as [`Fp`].
+    ///
+    /// Zero-cost - no copy, just a pointer cast.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the value is not in `[0, p)`.
     #[inline(always)]
     pub const fn check_ref(&self) -> &Fp<P, N> {
         assert_canonical!(self);
@@ -99,8 +104,10 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
         unsafe { self.as_fp_ref_unchecked() }
     }
 
-    /// Field equality using check semantics. Returns `true` if the raw integers are equal.
-    /// When they differ, asserts the larger value is canonical and returns `false`.
+    /// Returns `true` if `self` and `other` are field-equal under check semantics.
+    ///
+    /// Equal raw integers are field-equal. When the raw integers differ, asserts that the
+    /// larger value is canonical (panics if not) and returns `false`.
     #[inline]
     pub fn check_is_eq(&self, other: &Self) -> bool {
         match self.inner.cmp(&other.inner) {
@@ -164,8 +171,10 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
         acc
     }
 
-    /// Computes a square root mod p via `self^((p+1)/4)`. Returns `None` if `self` is not a
-    /// quadratic residue. Only available when `p % 4 == 3` (enforced at compile time).
+    /// Computes a square root mod p via `self^((p+1)/4)`.
+    ///
+    /// Returns `None` if `self` is not a quadratic residue. Only available when
+    /// `p % 4 == 3` (enforced at compile time).
     #[inline]
     pub fn sqrt(&self) -> Option<Self> {
         let root = self.pow(&P::MODULUS_PLUS_ONE_DIV_FOUR);

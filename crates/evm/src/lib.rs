@@ -12,28 +12,8 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-//! R0VM-accelerated EVM precompile primitives.
-//!
-//! Plain functions - no revm dependency, no `Crypto` trait impl. Consumers
-//! write a ~50-line adapter that implements whichever `revm_precompile::Crypto`
-//! version they're on by delegating to these functions, so this crate never
-//! blocks a revm upgrade.
-//!
-//! # Targets
-//!
-//! This crate assumes it is built for the R0VM zkVM target
-//! (`riscv32im-risc0-zkvm-elf`). The primitives call through to
-//! `risc0-bigint2` syscalls that only the guest runtime defines, so linking
-//! fails on other targets. Consumers should target-gate the dependency:
-//!
-//! ```toml
-//! [target.'cfg(all(target_os = "zkvm", target_vendor = "risc0"))'.dependencies]
-//! risc0-crypto-evm = "..."
-//! ```
-//!
-//! and place their `impl Crypto for R0vmCrypto { ... }` block under the same
-//! cfg gate.
-
+#![cfg_attr(docsrs, feature(doc_cfg))]
+#![doc = include_str!("../README.md")]
 #![no_std]
 
 extern crate alloc;

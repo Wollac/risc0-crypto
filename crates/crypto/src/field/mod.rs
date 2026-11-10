@@ -1,3 +1,10 @@
+//! Prime field arithmetic.
+//!
+//! [`FieldConfig`] defines a field by its modulus and arithmetic backend. [`Fp`] is the safe
+//! canonical field element (always in `[0, p)`); [`UnverifiedFp`] is the under-constrained
+//! companion for performance-sensitive chains where canonicality can be deferred.
+//! R0VM-accelerated arithmetic comes from [`R0VMFieldOps`].
+
 mod ops;
 mod unverified;
 
@@ -257,7 +264,9 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
         self.as_unverified().pow(exp).check()
     }
 
-    /// Computes a square root mod p. Returns `None` if `self` is not a quadratic residue.
+    /// Computes a square root mod p.
+    ///
+    /// Returns `None` if `self` is not a quadratic residue.
     /// Only available when `p % 4 == 3` (enforced at compile time).
     #[inline]
     pub fn sqrt(&self) -> Option<Self> {

@@ -1,3 +1,10 @@
+//! Short Weierstrass curve traits and points.
+//!
+//! [`CurveConfig`] defines a curve by its coefficients, generator, and arithmetic backend.
+//! [`AffinePoint`] is the safe point type, with operator overloads for `+`, `-` and `*` (scalar
+//! multiplication) and a [`double`](AffinePoint::double) method. Concrete curves live in
+//! [`curves`](crate::curves).
+
 mod ops;
 
 pub use ops::R0VMCurveOps;
@@ -102,8 +109,10 @@ pub trait CurveConfig<const N: usize>: Sized + Send + Sync + 'static {
     /// proliferation on the trait and feeds directly into scalar multiplication.
     const COFACTOR: &'static [u32];
 
-    /// Subgroup membership check. Default returns `true` for cofactor-1 curves, otherwise
-    /// checks `[order]P == O`. Override for curves with more efficient subgroup checks.
+    /// Returns `true` if `p` is in the prime-order subgroup.
+    ///
+    /// Default implementation returns `true` for cofactor-1 curves, otherwise checks
+    /// `[order]P == O`. Override for curves with more efficient subgroup checks.
     fn is_in_correct_subgroup(p: &AffinePoint<Self, N>) -> bool {
         if cofactor::is_one::<Self, _>() {
             return true;
@@ -235,11 +244,10 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         }
     }
 
-    /// Returns the two y-coordinates on the curve for the given `x`, or `None` if no point
-    /// with that x-coordinate exists. Returns `(y_even, y_odd)`.
+    /// Returns `(y_even, y_odd)`, the two y-coordinates on the curve for the given `x`.
     ///
-    /// The corresponding points are on the curve but not necessarily in the prime-order
-    /// subgroup.
+    /// Returns `None` if no point with that x-coordinate exists. The corresponding points
+    /// are on the curve but not necessarily in the prime-order subgroup.
     pub fn ys_from_x(
         x: impl AsRef<UnverifiedBaseField<C, N>>,
     ) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
@@ -272,6 +280,8 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
     /// Returns the `(x, y)` coordinates as [`Fp`] values, or `None` for the identity.
     ///
+    /// # Panics
+    ///
     /// Panics if either coordinate is not in `[0, p)`.
     #[inline(always)]
     pub const fn xy(&self) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
@@ -279,7 +289,10 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     }
 
     /// Returns the `(x, y)` coordinates as [`Fp`] references, or `None` for the identity.
+    ///
     /// Zero-cost - no copy, just a pointer cast.
+    ///
+    /// # Panics
     ///
     /// Panics if either coordinate is not in `[0, p)`.
     #[inline(always)]
