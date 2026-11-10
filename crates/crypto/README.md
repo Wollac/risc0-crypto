@@ -70,4 +70,13 @@ and revm's default crypto delegates to it.
 | EIP-2537 G1 MSM, k=128      |   19,412,368 | 69,095,071 | `blst`           |   3.56x |
 | modexp 256-bit              |       30,566 |    851,596 | `aurora`         |  27.86x |
 
+## Acknowledgements
+
+- All accelerated arithmetic runs the precompiled circuit programs of
+  [risc0-bigint2](https://crates.io/crates/risc0-bigint2) (Apache-2.0, RISC Zero). The elliptic
+  curve programs are embedded into this crate at build time.
+- The field and curve trait design follows [arkworks](https://github.com/arkworks-rs/algebra).
+- The ECDSA signature and recovery ID API follows the RustCrypto
+  [`ecdsa`](https://github.com/RustCrypto/signatures) crate.
+
 [sw]: https://en.wikipedia.org/wiki/Elliptic_curve#Short_Weierstrass_form
