@@ -7,6 +7,11 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- `risc0-crypto`: the BLS12-381 G1 subgroup check uses the curve endomorphism instead of a
+  multiplication by the group order, taking about 2.8x fewer cycles.
+
 ### Added
 
 - `risc0-crypto`: zkVM-accelerated cryptographic primitives built on

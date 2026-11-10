@@ -333,8 +333,8 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
 
     /// Returns `true` if this point is in the prime-order subgroup.
     ///
-    /// For curves with cofactor 1 this always returns `true`. For curves with a cofactor
-    /// (e.g. BLS12-381) this checks `[order]P == O`.
+    /// For curves with cofactor 1 this always returns `true`. For curves with a cofactor this
+    /// checks `[order]P == O`, unless the curve provides a faster test (e.g. BLS12-381).
     #[inline]
     #[must_use]
     pub fn is_in_correct_subgroup(&self) -> bool {

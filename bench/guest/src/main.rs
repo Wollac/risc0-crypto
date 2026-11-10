@@ -200,6 +200,11 @@ fn bench_eip2537() {
     bench!("eip2537/add"; {
         bls12_381_g1_add(a, b)
     });
+
+    let p = black_box(decode_bls12381_g1(&a).unwrap());
+    bench!("eip2537/subgroup_check"; {
+        p.is_in_correct_subgroup()
+    });
 }
 
 fn eip2537_msm_setup() -> alloc::vec::Vec<BlsG1PointScalar> {
