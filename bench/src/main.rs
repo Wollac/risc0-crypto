@@ -8,9 +8,6 @@ use tabular::{Row, Table};
 use thousands::Separable;
 
 /// Matches cycle markers: `R0VM[{cycle}] cycle-(start|end): {topic}`
-///
-/// Topics may carry an iteration suffix `*N` (e.g. `field/secp256k1/mul*10`).
-/// When present the host divides the total cycles by N and displays the per-op cost.
 static CYCLE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"R0VM\[(\d+)\] cycle-(start|end): (.+)").unwrap());
 
@@ -48,22 +45,14 @@ fn parse_json_flag() -> Option<String> {
     args.windows(2).find(|w| w[0] == "--json").map(|w| w[1].clone())
 }
 
-/// Splits a topic like `"field/secp256k1/mul*10"` into `("field/secp256k1/mul", 10)`.
-/// Topics without `*N` return a divisor of 1.
-fn parse_topic(topic: &str) -> (&str, u64) {
-    match topic.rsplit_once('*') {
-        Some((name, n)) => match n.parse::<u64>() {
-            Ok(d) if d > 0 => (name, d),
-            _ => (topic, 1),
-        },
-        None => (topic, 1),
-    }
-}
+/// Topic of the region that measures the harness overhead.
+const HARNESS: &str = "harness";
 
-/// Parse guest stdout into structured benchmark results.
+/// Parse guest stdout into structured benchmark results, with the harness overhead subtracted.
 fn parse_results(out: &str) -> anyhow::Result<Vec<BenchResult>> {
     let mut starts: HashMap<&str, u64> = HashMap::new();
     let mut results = Vec::new();
+    let mut overhead = None;
 
     for (_, [cycle_count, cmd, topic]) in CYCLE_RE.captures_iter(out).map(|c| c.extract()) {
         let cycle_count: u64 = cycle_count.parse()?;
@@ -73,12 +62,12 @@ fn parse_results(out: &str) -> anyhow::Result<Vec<BenchResult>> {
             }
             "end" => {
                 if let Some(start) = starts.remove(topic) {
-                    let (name, divisor) = parse_topic(topic);
-                    results.push(BenchResult {
-                        name: name.to_string(),
-                        unit: "cycles",
-                        value: (cycle_count - start) / divisor,
-                    });
+                    let value = cycle_count - start;
+                    if topic == HARNESS {
+                        overhead = Some(value);
+                    } else {
+                        results.push(BenchResult { name: topic.to_string(), unit: "cycles", value });
+                    }
                 }
             }
             _ => unreachable!(),
@@ -88,6 +77,15 @@ fn parse_results(out: &str) -> anyhow::Result<Vec<BenchResult>> {
     for topic in starts.keys() {
         eprintln!("warning: unmatched start for {topic}");
     }
+
+    let overhead = overhead.context("guest did not measure the harness overhead")?;
+    for r in &mut results {
+        r.value = r
+            .value
+            .checked_sub(overhead)
+            .with_context(|| format!("{} is below the harness overhead", r.name))?;
+    }
+    println!("Harness overhead: {overhead} cycles (subtracted)\n");
 
     Ok(results)
 }

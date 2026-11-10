@@ -23,6 +23,8 @@ Run locally with `rzup r0vm` installed:
 cargo run --release --manifest-path bench/Cargo.toml
 ```
 
+Each number is the cycle count of one call of the operation, with the harness overhead subtracted.
+
 Live benchmark tracking:
 [risc0-crypto benchmarks](https://wollac.github.io/risc0-crypto/dev/bench/).
 
