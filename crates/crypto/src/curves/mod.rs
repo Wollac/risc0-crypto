@@ -1,3 +1,9 @@
+//! Concrete curve definitions.
+//!
+//! Each submodule defines the base field, scalar field, and [`CurveConfig`](crate::CurveConfig)
+//! for one curve. Use these via [`AffinePoint`](crate::AffinePoint) for arithmetic and
+//! [`Signature`](crate::ecdsa::Signature) for ECDSA.
+
 /// Standard curve validation tests. Every curve module should invoke this.
 ///
 /// Assumes the module defines `Config`, `Fq`, `FrConfig`, and `Affine` (all curve modules

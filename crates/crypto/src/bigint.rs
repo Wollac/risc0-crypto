@@ -1,3 +1,9 @@
+//! Fixed-size big integer primitives.
+//!
+//! [`BigInt<N>`] stores `N * 32`-bit values as little-endian `u32` limbs and supports parsing,
+//! comparison, and `+`/`-` operator overloads. Modular arithmetic and field operations live in
+//! [`field`](crate::field) and [`modexp`](mod@crate::modexp).
+
 use core::{
     cmp::Ordering,
     ops::{Add, AddAssign, Sub, SubAssign},
@@ -33,7 +39,11 @@ impl<const N: usize> BigInt<N> {
         repr
     }
 
-    /// Extracts the value as a `u32`. Panics if any upper limb is nonzero.
+    /// Extracts the value as a `u32`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if any upper limb is nonzero.
     #[inline]
     pub const fn as_u32(&self) -> u32 {
         let mut i = 1;
@@ -44,7 +54,7 @@ impl<const N: usize> BigInt<N> {
         self.0[0]
     }
 
-    /// Parse a hex string at compile time.
+    /// Parses a hex string at compile time.
     ///
     /// Requires a `0x` prefix. Underscores are ignored. Values shorter than `N` limbs are
     /// zero-padded in the high limbs.
@@ -105,7 +115,7 @@ impl<const N: usize> BigInt<N> {
         Self(limbs)
     }
 
-    /// Parse big-endian bytes into little-endian limbs.
+    /// Parses big-endian bytes into little-endian limbs.
     ///
     /// Inputs shorter than `N * 4` bytes are zero-padded in the high limbs.
     /// Panics if `bytes.len() > N * 4`.
@@ -136,7 +146,7 @@ impl<const N: usize> BigInt<N> {
         Self(arr)
     }
 
-    /// Write little-endian limbs as big-endian bytes into `output`.
+    /// Writes little-endian limbs as big-endian bytes into `output`.
     ///
     /// Panics if `output.len() != N * 4`.
     #[inline]
@@ -147,7 +157,7 @@ impl<const N: usize> BigInt<N> {
         }
     }
 
-    /// Parse little-endian bytes into limbs (single memcpy on LE targets).
+    /// Parses little-endian bytes into limbs (single memcpy on LE targets).
     ///
     /// Panics if `bytes.len() > N * 4`.
     #[cfg(target_endian = "little")]
@@ -160,7 +170,7 @@ impl<const N: usize> BigInt<N> {
         Self(arr)
     }
 
-    /// View the limbs as a little-endian byte slice (zero-copy on LE targets).
+    /// Returns the limbs as a little-endian byte slice (zero-copy on LE targets).
     #[cfg(target_endian = "little")]
     #[inline]
     pub fn as_le_bytes(&self) -> &[u8] {
