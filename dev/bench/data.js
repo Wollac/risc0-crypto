@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1777047785099,
+  "lastUpdate": 1794348063490,
   "repoUrl": "https://github.com/Wollac/risc0-crypto",
   "entries": {
     "risc0-crypto benchmarks": [
@@ -466,6 +466,165 @@ window.BENCHMARK_DATA = {
           {
             "name": "modexp/256bit",
             "value": 26891,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/384bit",
+            "value": 49215,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/4096bit_e65537",
+            "value": 10370,
+            "unit": "cycles"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "welzwo@gmail.com",
+            "name": "Wolfgang Welz",
+            "username": "Wollac"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "50f7f27b7dfdf831b8e65de92118ec555eb34b56",
+          "message": "Backport docs, packaging and CI improvements from the boundless-xyz migration (#19)\n\n* docs: polish API docs and READMEs\n\nBackport the documentation work done during the boundless-xyz\nmigration: module-level docs, `# Panics` sections and tighter wording\nin the API docs, an extended benchmark table, target-gating guidance,\nand a README for risc0-crypto-evm that doubles as its crate docs.\n\nSource changes are comments plus crate-level doc attributes\n(`#![doc = include_str!(..)]` for risc0-crypto-evm and\n`#![cfg_attr(docsrs, feature(doc_cfg))]`).\n\nCompared with the boundless-xyz version, the Boundless-specific\nsecurity section is dropped (the audit warning at the top stays), the\nlive benchmark link and testing instructions are kept in the workspace\nREADME, and the curve module doc no longer describes doubling as an\noperator overload.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* build: share package metadata and update the docs.rs cfg\n\nBackport the packaging changes from the boundless-xyz migration:\n\n- move version, edition, license and repository to\n  `[workspace.package]`\n- replace the removed `doc_auto_cfg` rustdoc cfg with `docsrs`, and\n  give risc0-crypto-evm the same docs.rs metadata\n- prefix the crate descriptions with \"zkVM-only\"\n- symlink the license into each crate so it ships in the published\n  packages\n\nThe repository URL points at this repository; the Boundless homepage\nis not carried over.\n\nThis does not make the docs.rs build of risc0-crypto-evm work: that\nfails because the risc0-crypto build script runs `cargo metadata`,\nwhich needs network access when the crate is built as a dependency.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* docs: add a changelog\n\nBackport `CHANGELOG.md` from the boundless-xyz migration.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* ci: backport the CI improvements from the boundless-xyz migration\n\nFrom the boundless-xyz workflow:\n\n- clippy covers all targets and replaces the separate `cargo check` job\n- pin the nightly used for rustfmt and the docs.rs simulation\n- add doc-test, docs.rs simulation and `cargo sort --grouped` jobs\n- pin third-party actions to commit SHAs\n- key the concurrency group on the pull request number\n\nDifferences from the boundless-xyz workflow:\n\n- the license-header job and the merge-queue trigger are left out\n- boundless used forks of two actions under the risc0 organization, one\n  of which no longer exists; use the upstream actions at their current\n  releases (cargo-install v3.5.0, github-action-benchmark v1.22.2)\n- the guest tests need cargo-risczero built with the `experimental`\n  feature, and the branch it was built from is gone; build from the\n  commit that branch pointed at, still available as the head of\n  risc0/risc0#3713, and allow 90 minutes for a build without cache\n\n`Swatinem/rust-cache` is no longer used, as in the boundless-xyz\nworkflow.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* docs: credit upstream projects and fix the P-256 test vector citation\n\nAdd an acknowledgements section to the risc0-crypto README: the\ncircuit programs come from risc0-bigint2, the trait design follows\narkworks, and the ECDSA API follows the RustCrypto `ecdsa` crate.\n\nThe P-256 test vectors were cited as daimo-eth cases, but the case\nnames used (`ok_1`, `fail_invalid_sig`, `fail_invalid_pubkey`) are\nthose of revm's secp256r1 tests, which in turn take the vectors from\ndaimo-eth. Cite both.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-10T13:57:51-08:00",
+          "tree_id": "2da86ac5c68a69a4f9acedede45d4006759f1859",
+          "url": "https://github.com/Wollac/risc0-crypto/commit/50f7f27b7dfdf831b8e65de92118ec555eb34b56"
+        },
+        "date": 1794348062680,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "ecrecover",
+            "value": 118894,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip196/add",
+            "value": 2357,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip196/mul",
+            "value": 71200,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/add",
+            "value": 3207,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/msm_1",
+            "value": 184186,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/msm_128",
+            "value": 17981470,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/add",
+            "value": 85,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/mul",
+            "value": 93,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/inverse",
+            "value": 101,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/add",
+            "value": 152,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/mul",
+            "value": 168,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/inverse",
+            "value": 179,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/is_on_curve",
+            "value": 355,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/point_add",
+            "value": 350,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/scalar_mul",
+            "value": 68228,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_sign",
+            "value": 67419,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_verify",
+            "value": 83739,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_recover",
+            "value": 103618,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/is_on_curve",
+            "value": 446,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/point_add",
+            "value": 464,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/scalar_mul",
+            "value": 107264,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_sign",
+            "value": 105758,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_verify",
+            "value": 167583,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_recover",
+            "value": 227908,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/256bit",
+            "value": 26893,
             "unit": "cycles"
           },
           {
