@@ -8,9 +8,6 @@ use tabular::{Row, Table};
 use thousands::Separable;
 
 /// Matches cycle markers: `R0VM[{cycle}] cycle-(start|end): {topic}`
-///
-/// Topics may carry an iteration suffix `*N` (e.g. `field/secp256k1/mul*10`).
-/// When present the host divides the total cycles by N and displays the per-op cost.
 static CYCLE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"R0VM\[(\d+)\] cycle-(start|end): (.+)").unwrap());
 
@@ -31,7 +28,7 @@ fn main() -> anyhow::Result<()> {
     let _ = default_executor().execute(env, GUEST_ELF)?;
     let stdout = String::from_utf8(out).context("guest stdout was not valid UTF-8")?;
 
-    let results = to_results(&parse_regions(&stdout)?)?;
+    let results = parse_results(&stdout)?;
     print_table(&results);
 
     if let Some(path) = json_path {
@@ -48,34 +45,14 @@ fn parse_json_flag() -> Option<String> {
     args.windows(2).find(|w| w[0] == "--json").map(|w| w[1].clone())
 }
 
-/// Harness overhead of a single-shot region, measured by the guest.
-const HARNESS_REGION: &str = "harness/region";
-/// Harness overhead of a `*N` region, measured by the guest.
-const HARNESS_CALL: &str = "harness/call";
+/// Topic of the region that measures the harness overhead.
+const HARNESS: &str = "harness";
 
-/// A measured region: `cycles` between its markers for `iters` runs of the operation.
-struct Region<'a> {
-    name: &'a str,
-    iters: u64,
-    cycles: u64,
-}
-
-/// Splits a topic like `"field/secp256k1/mul*10"` into `("field/secp256k1/mul", 10)`.
-/// Topics without `*N` return a divisor of 1.
-fn parse_topic(topic: &str) -> (&str, u64) {
-    match topic.rsplit_once('*') {
-        Some((name, n)) => match n.parse::<u64>() {
-            Ok(d) if d > 0 => (name, d),
-            _ => (topic, 1),
-        },
-        None => (topic, 1),
-    }
-}
-
-/// Parse guest stdout into measured regions.
-fn parse_regions(out: &str) -> anyhow::Result<Vec<Region<'_>>> {
+/// Parse guest stdout into structured benchmark results, with the harness overhead subtracted.
+fn parse_results(out: &str) -> anyhow::Result<Vec<BenchResult>> {
     let mut starts: HashMap<&str, u64> = HashMap::new();
-    let mut regions = Vec::new();
+    let mut results = Vec::new();
+    let mut overhead = None;
 
     for (_, [cycle_count, cmd, topic]) in CYCLE_RE.captures_iter(out).map(|c| c.extract()) {
         let cycle_count: u64 = cycle_count.parse()?;
@@ -85,8 +62,12 @@ fn parse_regions(out: &str) -> anyhow::Result<Vec<Region<'_>>> {
             }
             "end" => {
                 if let Some(start) = starts.remove(topic) {
-                    let (name, iters) = parse_topic(topic);
-                    regions.push(Region { name, iters, cycles: cycle_count - start });
+                    let value = cycle_count - start;
+                    if topic == HARNESS {
+                        overhead = Some(value);
+                    } else {
+                        results.push(BenchResult { name: topic.to_string(), unit: "cycles", value });
+                    }
                 }
             }
             _ => unreachable!(),
@@ -97,39 +78,14 @@ fn parse_regions(out: &str) -> anyhow::Result<Vec<Region<'_>>> {
         eprintln!("warning: unmatched start for {topic}");
     }
 
-    Ok(regions)
-}
-
-/// Convert regions into per-op results, subtracting the harness overhead measured by the guest.
-fn to_results(regions: &[Region<'_>]) -> anyhow::Result<Vec<BenchResult>> {
-    let find = |name| {
-        regions
-            .iter()
-            .find(|r| r.name == name)
-            .with_context(|| format!("the guest did not measure `{name}`"))
-    };
-    let (region, call) = (find(HARNESS_REGION)?, find(HARNESS_CALL)?);
-
-    let mut results = Vec::new();
-    for r in regions {
-        let value = if r.name == HARNESS_REGION {
-            r.cycles
-        } else if r.name == HARNESS_CALL {
-            r.cycles.saturating_sub(region.cycles) / r.iters
-        } else if r.iters > 1 {
-            anyhow::ensure!(
-                r.iters == call.iters,
-                "`{}` runs {} iterations, but `{HARNESS_CALL}` was measured with {}",
-                r.name,
-                r.iters,
-                call.iters
-            );
-            r.cycles.saturating_sub(call.cycles) / r.iters
-        } else {
-            r.cycles.saturating_sub(region.cycles)
-        };
-        results.push(BenchResult { name: r.name.to_string(), unit: "cycles", value });
+    let overhead = overhead.context("guest did not measure the harness overhead")?;
+    for r in &mut results {
+        r.value = r
+            .value
+            .checked_sub(overhead)
+            .with_context(|| format!("{} is below the harness overhead", r.name))?;
     }
+    println!("Harness overhead: {overhead} cycles (subtracted)\n");
 
     Ok(results)
 }

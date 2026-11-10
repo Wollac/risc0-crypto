@@ -16,42 +16,34 @@ use risc0_zkvm::guest::env;
 risc0_zkvm::guest::entry!(main);
 
 /// Benchmark a block, logging cycle-start/end markers around it. Formatting happens before the
-/// timed region so it doesn't consume measured cycles. The block runs as a [`standalone`] function
-/// and its result is black-boxed by reference, so it is never copied.
+/// timed region so it doesn't consume measured cycles.
 macro_rules! bench {
     ($fmt:literal $(, $args:expr)* ; $body:expr) => {{
         let __start = format!(concat!("cycle-start: ", $fmt) $(, $args)*);
         let __end = format!(concat!("cycle-end: ", $fmt) $(, $args)*);
-        env::log(&__start);
-        let _ = black_box(&standalone(|| $body));
-        env::log(&__end);
+        measure(&__start, &__end, || $body);
     }};
 }
 
-/// Runs `op` as its own function, so its code doesn't depend on the rest of the binary.
+/// Logs the markers around one [`standalone`] call of `op`. Not inlined, so the code between the
+/// markers doesn't depend on the caller. The result is black-boxed by reference to avoid a copy.
+#[inline(never)]
+fn measure<R>(start: &str, end: &str, op: impl FnOnce() -> R) {
+    env::log(start);
+    let _ = black_box(&standalone(op));
+    env::log(end);
+}
+
+/// Runs `op` as its own function, so its code is not merged into the caller's.
 #[inline(never)]
 fn standalone<R>(op: impl FnOnce() -> R) -> R {
     op()
 }
 
-/// Runs `op` [`BENCH_ITERS`] times, each as a [`standalone`] call.
-#[inline(never)]
-fn repeat<R>(op: impl Fn() -> R + Copy) {
-    for _ in 0..BENCH_ITERS {
-        let _ = black_box(&standalone(op));
-    }
-}
-
-/// Measures the harness overhead, which the host subtracts from all other results.
-fn calibrate() {
-    // markers and one call
-    bench!("harness/region"; black_box(()));
-    // markers, loop and calls
-    bench!("harness/call*{}", BENCH_ITERS; repeat(|| black_box(())));
-}
-
 fn main() {
-    calibrate();
+    // harness overhead (markers and one call), which the host subtracts from all other results
+    bench!("harness"; black_box(()));
+
     bench_ecrecover();
     bench_eip196();
     bench_eip2537();
@@ -279,16 +271,13 @@ fn bench_eip2537_msm() {
 
 // -- field benchmarks --
 
-const BENCH_ITERS: u32 = 10;
-
 macro_rules! bench_field {
     ($name:expr, $Fq:ty, $val:expr) => {{
-        let v: $Fq = $val;
-        let (a, b) = (black_box(&v), black_box(&v));
+        let v: $Fq = black_box($val);
 
-        bench!("{}/add*{}", $name, BENCH_ITERS; repeat(move || a + b));
-        bench!("{}/mul*{}", $name, BENCH_ITERS; repeat(move || a * b));
-        bench!("{}/inverse*{}", $name, BENCH_ITERS; repeat(move || a.inverse()));
+        bench!("{}/add", $name; &v + &v);
+        bench!("{}/mul", $name; &v * &v);
+        bench!("{}/inverse", $name; v.inverse());
     }};
 }
 
@@ -315,10 +304,9 @@ macro_rules! bench_ec {
         let scalar: $Fr = black_box($scalar);
 
         let p2 = black_box(<$Affine>::GENERATOR.double());
-        let (a, b) = (black_box(&g), black_box(&p2));
 
-        bench!("{}/is_on_curve*{}", $name, BENCH_ITERS; repeat(move || a.is_on_curve()));
-        bench!("{}/point_add*{}", $name, BENCH_ITERS; repeat(move || a + b));
+        bench!("{}/is_on_curve", $name; g.is_on_curve());
+        bench!("{}/point_add", $name; &g + &p2);
 
         bench!("{}/scalar_mul", $name; {
             &g * &scalar
