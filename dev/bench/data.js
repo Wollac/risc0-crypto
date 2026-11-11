@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794382910222,
+  "lastUpdate": 1794414388925,
   "repoUrl": "https://github.com/Wollac/risc0-crypto",
   "entries": {
     "risc0-crypto benchmarks": [
@@ -848,6 +848,170 @@ window.BENCHMARK_DATA = {
           {
             "name": "eip2537/msm_128",
             "value": 18365331,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/add",
+            "value": 86,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/mul",
+            "value": 94,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/inverse",
+            "value": 102,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/add",
+            "value": 145,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/mul",
+            "value": 157,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/inverse",
+            "value": 169,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/is_on_curve",
+            "value": 375,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/point_add",
+            "value": 197,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/scalar_mul",
+            "value": 68085,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_sign",
+            "value": 67458,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_verify",
+            "value": 83778,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_recover",
+            "value": 103678,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/is_on_curve",
+            "value": 460,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/point_add",
+            "value": 258,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/scalar_mul",
+            "value": 107097,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_sign",
+            "value": 105836,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_verify",
+            "value": 167660,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_recover",
+            "value": 227331,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/256bit",
+            "value": 27261,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/384bit",
+            "value": 49653,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/4096bit_e65537",
+            "value": 10046,
+            "unit": "cycles"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "welzwo@gmail.com",
+            "name": "Wolfgang Welz",
+            "username": "Wollac"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "298068b6b34a356291dc6fc8d08490066d3bc890",
+          "message": "perf(bls12-381): check G1 membership with the curve endomorphism (#20)\n\n* perf(bls12-381): check G1 membership with the curve endomorphism\n\nOverride `CurveConfig::is_in_correct_subgroup` for BLS12-381 with the\nendomorphism test `φ(P) == -[z²]P` (Scott, ePrint 2021/1130; the test\nEIP-2537 specifies). It takes two multiplications by the 64-bit `|z|`\ninstead of one by the 255-bit group order `r`.\n\nThe doc comment carries a self-contained argument for why the test is\nexact. Tests pin the constants (`β³ = 1`, `r = z⁴ - z² + 1`,\n`φ(G) = -[z²]G`), compare against the `[r]P == O` definition on points\ninside and outside G1, and cover the EIP-2537 failure vector.\n\nCycles (r0vm 3.0.6):\n\n    eip2537/subgroup_check      94,493 ->     33,325\n    eip2537/msm_1              187,820 ->    126,658\n    eip2537/msm_128         18,365,331 -> 10,536,595\n\nAll other benchmarks are unchanged.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* docs(bls12-381): shorten the subgroup check doc comment\n\nDrop the step-by-step argument; the references cover it. Keep one\nsentence on why the test is sound.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n* docs(bls12-381): reword the comment on the two multiplications\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>\n\n---------\n\nCo-authored-by: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T08:23:18-08:00",
+          "tree_id": "5137df1242c2a7624e82fd63529f63d95c1ff275",
+          "url": "https://github.com/Wollac/risc0-crypto/commit/298068b6b34a356291dc6fc8d08490066d3bc890"
+        },
+        "date": 1794414388588,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "ecrecover",
+            "value": 117117,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip196/add",
+            "value": 2219,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip196/mul",
+            "value": 71254,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/add",
+            "value": 3047,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/subgroup_check",
+            "value": 33325,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/msm_1",
+            "value": 126658,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/msm_128",
+            "value": 10536595,
             "unit": "cycles"
           },
           {
