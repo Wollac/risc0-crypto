@@ -18,8 +18,10 @@ env:
   RUST_BACKTRACE: full
   # Bump occasionally to pull in rustfmt/rustdoc improvements; keep within a few months.
   NIGHTLY: nightly-2026-04-15
-  # risc0 commit to build cargo-risczero from: "Fix cargo risczero guest test", the head of
-  # risc0/risc0#3713 (formerly the branch victor/feb12-af1f67c8).
+  # risc0 commit to build cargo-risczero from: "Fix cargo risczero guest test" (the release-3.0
+  # backport of risc0/risc0#3592, closed PR risc0/risc0#3713). Upstream deleted the branch, so it
+  # is fetched from the victor/feb12-af1f67c8 branch of the Wollac/risc0 fork.
+  CARGO_RISCZERO_GIT: https://github.com/Wollac/risc0.git
   CARGO_RISCZERO_REV: 2d184364731643279835f281d9244a15c7149a06
   # rzup component versions. r0vm must match the minor version of risc0-zkvm in bench/Cargo.lock,
   # and a different guest toolchain changes the benchmark numbers.
@@ -107,7 +109,7 @@ jobs:
   test:
     name: Guest Test
     runs-on: ubuntu-latest
-    # building cargo-risczero on a cache miss takes about 45 minutes
+    # building cargo-risczero on a cache miss takes about 30 minutes
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@v4
@@ -130,19 +132,20 @@ jobs:
         id: cache-risczero
         uses: actions/cache@v4
         with:
-          path: |
-            ~/.cargo/bin/cargo-risczero
-            ~/.cargo/bin/r0vm
+          path: ~/.cargo/bin/cargo-risczero
           key: cargo-risczero-${{ env.CARGO_RISCZERO_REV }}
 
       # `cargo risczero guest test` needs the `experimental` feature, which the released binaries
-      # are built without.
+      # are built without. The default `r0vm` feature is not needed (guest tests execute
+      # in-process) and dropping it saves ~8 minutes; the `r0vm` it still installs is an empty stub
+      # and is not cached.
       - name: Install cargo-risczero from source
         if: steps.cache-risczero.outputs.cache-hit != 'true'
         run: >
           cargo install cargo-risczero
-          --git https://github.com/risc0/risc0.git
+          --git ${{ env.CARGO_RISCZERO_GIT }}
           --rev ${{ env.CARGO_RISCZERO_REV }}
+          --no-default-features
           --features experimental
           --force
 
