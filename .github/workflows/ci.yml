@@ -136,9 +136,8 @@ jobs:
           key: cargo-risczero-${{ env.CARGO_RISCZERO_REV }}
 
       # `cargo risczero guest test` needs the `experimental` feature, which the released binaries
-      # are built without. The default `r0vm` feature is not needed (guest tests execute
-      # in-process) and dropping it saves ~8 minutes; the `r0vm` it still installs is an empty stub
-      # and is not cached.
+      # are built without. Guest tests execute in-process, so skip the default `r0vm` feature (saves
+      # ~8 minutes) and install only the `cargo-risczero` binary, not the package's `r0vm` target.
       - name: Install cargo-risczero from source
         if: steps.cache-risczero.outputs.cache-hit != 'true'
         run: >
@@ -147,6 +146,7 @@ jobs:
           --rev ${{ env.CARGO_RISCZERO_REV }}
           --no-default-features
           --features experimental
+          --bin cargo-risczero
           --force
 
       - name: Run guest tests
