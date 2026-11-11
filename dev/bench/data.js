@@ -1,5 +1,5 @@
 window.BENCHMARK_DATA = {
-  "lastUpdate": 1794352848759,
+  "lastUpdate": 1794382910222,
   "repoUrl": "https://github.com/Wollac/risc0-crypto",
   "entries": {
     "risc0-crypto benchmarks": [
@@ -659,6 +659,165 @@ window.BENCHMARK_DATA = {
           "url": "https://github.com/Wollac/risc0-crypto/commit/5eeb3d06e33ad07d1d9f4c43f1a3b0fa04febaaf"
         },
         "date": 1794352848450,
+        "tool": "customSmallerIsBetter",
+        "benches": [
+          {
+            "name": "ecrecover",
+            "value": 117117,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip196/add",
+            "value": 2219,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip196/mul",
+            "value": 71254,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/add",
+            "value": 3047,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/msm_1",
+            "value": 187820,
+            "unit": "cycles"
+          },
+          {
+            "name": "eip2537/msm_128",
+            "value": 18365331,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/add",
+            "value": 86,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/mul",
+            "value": 94,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp256r1/inverse",
+            "value": 102,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/add",
+            "value": 145,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/mul",
+            "value": 157,
+            "unit": "cycles"
+          },
+          {
+            "name": "field/secp384r1/inverse",
+            "value": 169,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/is_on_curve",
+            "value": 375,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/point_add",
+            "value": 197,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/scalar_mul",
+            "value": 68085,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_sign",
+            "value": 67458,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_verify",
+            "value": 83778,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp256r1/ecdsa_recover",
+            "value": 103678,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/is_on_curve",
+            "value": 460,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/point_add",
+            "value": 258,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/scalar_mul",
+            "value": 107097,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_sign",
+            "value": 105836,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_verify",
+            "value": 167660,
+            "unit": "cycles"
+          },
+          {
+            "name": "ec/secp384r1/ecdsa_recover",
+            "value": 227331,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/256bit",
+            "value": 27261,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/384bit",
+            "value": 49653,
+            "unit": "cycles"
+          },
+          {
+            "name": "modexp/4096bit_e65537",
+            "value": 10046,
+            "unit": "cycles"
+          }
+        ]
+      },
+      {
+        "commit": {
+          "author": {
+            "email": "welzwo@gmail.com",
+            "name": "Wolfgang Welz",
+            "username": "Wollac"
+          },
+          "committer": {
+            "email": "noreply@github.com",
+            "name": "GitHub",
+            "username": "web-flow"
+          },
+          "distinct": true,
+          "id": "2ff77ccc6cfadeae39bb49fdca121da4d70c2d99",
+          "message": "ci: pin the rzup component versions (#22)\n\nPin r0vm and the guest Rust toolchain installed by rzup, so a new release cannot break the benchmark job or shift its numbers. r0vm must match the minor version of risc0-zkvm in bench/Cargo.lock.\n\nStop installing the C toolchain: no guest dependency compiles C.\n\nCo-Authored-By: Claude Fable 5.2 <noreply@anthropic.com>",
+          "timestamp": "2026-11-11T08:39:04+01:00",
+          "tree_id": "88ffd0ba2a53fe3c016a8beea79d6d460d762634",
+          "url": "https://github.com/Wollac/risc0-crypto/commit/2ff77ccc6cfadeae39bb49fdca121da4d70c2d99"
+        },
+        "date": 1794382909881,
         "tool": "customSmallerIsBetter",
         "benches": [
           {
