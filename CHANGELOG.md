@@ -12,6 +12,12 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `risc0-crypto`: the BLS12-381 G1 subgroup check uses the curve endomorphism instead of a
   multiplication by the group order, taking about 2.8x fewer cycles.
 
+### Fixed
+
+- `risc0-crypto`: ECDSA no longer treats the identity as a public key, for which signatures could
+  be forged. `verify` returns `false` for it, `recover` returns `None` instead of it, and `sign`
+  panics on a zero private key.
+
 ### Added
 
 - `risc0-crypto`: zkVM-accelerated cryptographic primitives built on

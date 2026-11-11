@@ -103,7 +103,7 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
     ///
     /// # Panics
     ///
-    /// Panics if `k` is zero.
+    /// Panics if `d` or `k` is zero.
     pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
         let (r, s, ..) = sign_raw::<C, N>(d, k, hash)?;
         Some(Self { r, s })
@@ -127,11 +127,21 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
         (self.r, self.s)
     }
 
-    /// Reconstructs the candidate nonce point `R' = [z*s⁻¹]G + [r*s⁻¹]Q`.
+    /// Reconstructs the coordinates of the candidate nonce point `R' = [z*s⁻¹]G + [r*s⁻¹]Q`.
     ///
     /// This is the core ECDSA verification equation. If the signature is valid for `Q = pubkey`,
-    /// then `R' = [k]G` (the original nonce point).
-    fn reconstruct_r(&self, pubkey: &AffinePoint<C, N>, hash: &[u8]) -> AffinePoint<C, N> {
+    /// then `R' = [k]G` (the original nonce point). Returns `None` if `pubkey` or `R'` is the
+    /// identity, which no valid signature produces.
+    fn reconstruct_r(
+        &self,
+        pubkey: &AffinePoint<C, N>,
+        hash: &[u8],
+    ) -> Option<(BaseField<C, N>, BaseField<C, N>)> {
+        // with Q = O, R' = [z*s⁻¹]G would not depend on r, so (R'.x, s) would verify for any s
+        if pubkey.is_identity() {
+            return None;
+        }
+
         let z = ScalarField::<C, N>::from_be_bytes_mod_order(hash);
 
         // u1 = z * s⁻¹, u2 = r * s⁻¹ (s is nonzero by construction)
@@ -146,15 +156,16 @@ impl<C: CurveConfig<N>, const N: usize> Signature<C, N> {
             u2.check_ref(),
             pubkey,
         )
+        .xy()
     }
 
     /// Verifies this signature against a message hash and public key `pubkey`.
     ///
     /// `hash` is the big-endian digest output, reduced mod n to produce the scalar `z`.
     /// `pubkey` must be in the prime-order subgroup (e.g. constructed via
-    /// [`AffinePoint::new_in_subgroup`]).
+    /// [`AffinePoint::new_in_subgroup`]). Returns `false` if `pubkey` is the identity.
     pub fn verify(&self, pubkey: &AffinePoint<C, N>, hash: &[u8]) -> bool {
-        let Some((rx, _)) = self.reconstruct_r(pubkey, hash).xy() else {
+        let Some((rx, _)) = self.reconstruct_r(pubkey, hash) else {
             return false;
         };
         base_to_scalar::<C, N>(rx) == self.r
@@ -272,7 +283,7 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
     ///
     /// # Panics
     ///
-    /// Panics if `k` is zero.
+    /// Panics if `d` or `k` is zero.
     pub fn sign(d: &ScalarField<C, N>, k: &ScalarField<C, N>, hash: &[u8]) -> Option<Self> {
         let (r, s, x, y) = sign_raw::<C, N>(d, k, hash)?;
 
@@ -309,9 +320,10 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
     /// needed.
     ///
     /// Reconstructs the nonce point via the verification equation; if the signature is valid for
-    /// `pubkey`, the result equals `[k]G` and we can verify the recovery ID against it.
+    /// `pubkey`, the result equals `[k]G` and we can verify the recovery ID against it. Returns
+    /// `false` if `pubkey` is the identity.
     pub fn verify(&self, pubkey: &AffinePoint<C, N>, hash: &[u8]) -> bool {
-        let Some((rx, ry)) = self.sig.reconstruct_r(pubkey, hash).xy() else {
+        let Some((rx, ry)) = self.sig.reconstruct_r(pubkey, hash) else {
             return false;
         };
 
@@ -332,7 +344,8 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
     ///
     /// Given `(r, s, v, hash)`, returns the unique public key `Q` such that `(r, s)` is a
     /// valid ECDSA signature on `hash` under `Q` with recovery ID `v`. Returns `None` if the
-    /// recovery ID is inconsistent (e.g., no curve point at the recovered x-coordinate).
+    /// recovery ID is inconsistent (e.g., no curve point at the recovered x-coordinate) or if `Q`
+    /// would be the identity, which is not a valid public key.
     pub fn recover(&self, hash: &[u8]) -> Option<AffinePoint<C, N>> {
         // reconstruct R.x in the base field. r = R.x mod n, so we may need to undo the reduction
         // depending on the recovery ID
@@ -361,7 +374,8 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
         u2.neg_in_place();
 
         let g_pt = &AffinePoint::GENERATOR;
-        Some(AffinePoint::double_scalar_mul(u1.check_ref(), &r_pt, u2.check_ref(), g_pt))
+        let q = AffinePoint::double_scalar_mul(u1.check_ref(), &r_pt, u2.check_ref(), g_pt);
+        if q.is_identity() { None } else { Some(q) }
     }
 
     /// Normalizes into "low S" form, adjusting the recovery ID accordingly.
@@ -384,18 +398,19 @@ impl<C: CurveConfig<N>, const N: usize> RecoverableSignature<C, N> {
 type SignRaw<C, const N: usize> =
     (ScalarField<C, N>, ScalarField<C, N>, BaseField<C, N>, BaseField<C, N>);
 
-/// Core ECDSA signing computation. Returns `(r, s, R.x, R.y)`. Panics if `k` is zero.
+/// Core ECDSA signing computation. Returns `(r, s, R.x, R.y)`. Panics if `d` or `k` is zero.
 fn sign_raw<C: CurveConfig<N>, const N: usize>(
     d: &ScalarField<C, N>,
     k: &ScalarField<C, N>,
     hash: &[u8],
 ) -> Option<SignRaw<C, N>> {
+    // d = 0 would sign for the identity, which is not a valid public key
+    assert!(!d.is_zero(), "private key d must be nonzero");
     assert!(!k.is_zero(), "nonce k must be nonzero");
 
-    // R = [k]G
+    // R = [k]G, not the identity for 0 < k < n when G has order n
     let r_pt = &AffinePoint::<C, N>::GENERATOR * k;
-    // SAFETY: [k]G is not identity for nonzero k
-    let (x, y) = unsafe { r_pt.xy().unwrap_unchecked() };
+    let (x, y) = r_pt.xy()?;
 
     // r = R.x mod n
     let r = base_to_scalar::<C, N>(x);
@@ -455,14 +470,25 @@ mod tests {
         assert!(sig.verify(&pubkey, HASH));
     }
 
-    #[test]
-    fn sign_with_zero_private_key() {
-        let d: Fr = Fr::ZERO;
-        let pubkey = &Affine::GENERATOR * &d;
-        let k: Fr = Fr::ONE;
+    /// A signature that satisfies the verification equation for `Q = O`: `R' = [z*s⁻¹]G` does not
+    /// depend on `r`, so `(r, s) = (R'.x, 1)` works. Also returns the y parity of `R'`.
+    fn forged_for_identity() -> (Sig, bool) {
+        let z = Fr::from_be_bytes_mod_order(HASH);
+        let (x, y) = (&Affine::GENERATOR * &z).xy().unwrap();
+        let sig = Sig::new(base_to_scalar::<secp256k1::Config, 8>(x), Fr::ONE).unwrap();
+        (sig, y.as_bigint().is_odd())
+    }
 
-        let sig = Sig::sign(&d, &k, HASH).unwrap();
-        assert!(sig.verify(&pubkey, HASH));
+    #[test]
+    fn verify_rejects_identity_pubkey() {
+        let (sig, _) = forged_for_identity();
+        assert!(!sig.verify(&Affine::IDENTITY, HASH));
+    }
+
+    #[test]
+    #[should_panic(expected = "private key d must be nonzero")]
+    fn sign_rejects_zero_private_key() {
+        let _ = Sig::sign(&Fr::ZERO, &Fr::ONE, HASH);
     }
 
     #[test]
@@ -576,6 +602,16 @@ mod tests {
             let rsig = RSig::sign(&d, &k, HASH).unwrap();
             let recovered = rsig.recover(&[0xff]).unwrap();
             assert_ne!(recovered, pubkey);
+        }
+
+        #[test]
+        fn identity_pubkey_is_rejected() {
+            // R = [z]G and s = 1 also give Q = [r⁻¹]([s]R - [z]G) = O
+            let (sig, is_y_odd) = forged_for_identity();
+            let rsig = RecoverableSignature::new(sig, RecoveryId::new(is_y_odd, false));
+
+            assert!(!rsig.verify(&Affine::IDENTITY, HASH));
+            assert!(rsig.recover(HASH).is_none());
         }
 
         #[test]
