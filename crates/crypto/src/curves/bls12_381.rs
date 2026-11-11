@@ -35,6 +35,17 @@ impl FieldConfig<LIMBS_384> for FrConfig {
 
 pub type Fr = Fp<FrConfig, LIMBS_384>;
 
+// --- G1 subgroup check parameters ---
+
+/// `|z|` for the BLS parameter `z = -0xd201000000010000` that generates the curve. In particular
+/// `r = z⁴ - z² + 1`.
+const Z_ABS: Fr = fp!("0xd201000000010000");
+
+/// `β`, the primitive cube root of unity in `Fq` for which `φ(x, y) = (βx, y)` acts on G1 as
+/// multiplication by `-z²`. The other root, `β²`, acts as `z² - 1`.
+const BETA: Fq =
+    fp!("0x5f19672fdf76ce51ba69c6076a0f77eaddb3a93be6f89688de17d813620a00022e01fffffffefffe");
+
 // --- Curve config ---
 
 pub enum Config {}
@@ -58,6 +69,40 @@ impl CurveConfig<LIMBS_384> for Config {
     );
 
     const COFACTOR: &'static [u32] = &[0x0000aaab, 0x8c00aaab, 0x5555e156, 0x396c8c00];
+
+    /// Tests G1 membership with the curve endomorphism instead of checking `[r]P == O`.
+    ///
+    /// With `φ(x, y) = (βx, y)` for a cube root of unity `β`, and the BLS parameter `z`, a point
+    /// `P` on the curve is in G1 if and only if
+    ///
+    /// ```text
+    /// φ(P) == -[z²]P
+    /// ```
+    ///
+    /// which takes two multiplications by the 64-bit `|z|` instead of one by the 255-bit `r`. It is
+    /// sound because `φ² + φ + 1 = 0` on the curve and `r = z⁴ - z² + 1`, so the test implies
+    /// `[r]P = O`. See [Scott][scott], [El Housni, Guillevic and Piellard][ehgp] and
+    /// [EIP-2537][eip].
+    ///
+    /// [scott]: https://eprint.iacr.org/2021/1130
+    /// [ehgp]: https://eprint.iacr.org/2022/352
+    /// [eip]: https://github.com/ethereum/EIPs/blob/master/assets/eip-2537/fast_subgroup_checks.md
+    fn is_in_correct_subgroup(p: &Affine) -> bool {
+        let Some((x, y)) = p.xy_unverified() else {
+            return true; // the identity is in every subgroup
+        };
+
+        // [z²]P as two multiplications by |z|
+        let z2p = &(p * &Z_ABS) * &Z_ABS;
+        let Some((z2x, z2y)) = z2p.xy_unverified() else {
+            // -[z²]P = O cannot equal φ(P), which is not the identity. Not reachable for a point
+            // on the curve, whose order is coprime to z.
+            return false;
+        };
+
+        // φ(P) == -[z²]P  <=>  (βx, y) == (z2x, -z2y)
+        (x * &BETA).check_is_eq(z2x) && (-z2y).check_is_eq(y)
+    }
 }
 
 pub type Affine = AffinePoint<Config, LIMBS_384>;
@@ -65,6 +110,7 @@ pub type Affine = AffinePoint<Config, LIMBS_384>;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::UnverifiedFp;
     use rstest::rstest;
 
     curve_sanity_tests!();
@@ -88,6 +134,69 @@ mod tests {
         p += &Affine::GENERATOR;
         assert!(!p.is_in_correct_subgroup());
         assert!(p.clear_cofactor().is_in_correct_subgroup());
+    }
+
+    /// The definition of G1 membership, `[r]P == O`, which the endomorphism test replaces.
+    fn has_order_dividing_r(p: &Affine) -> bool {
+        (p * &UnverifiedFp::from_bigint(FrConfig::MODULUS)).is_identity()
+    }
+
+    #[test]
+    fn subgroup_check_parameters() {
+        // β is a primitive cube root of unity
+        assert_ne!(BETA, Fq::ONE);
+        assert_eq!(&(&BETA * &BETA) * &BETA, Fq::ONE);
+
+        // r = z⁴ - z² + 1. Both sides are below q, so equality in Fq is equality of integers.
+        let z = Fq::from_bigint(Z_ABS.to_bigint()).unwrap();
+        let r = Fq::from_bigint(FrConfig::MODULUS).unwrap();
+        let z2 = &z * &z;
+        assert_eq!(&(&(&z2 * &z2) - &z2) + &Fq::ONE, r);
+
+        // φ acts on G1 as multiplication by -z²: φ(G) == -[z²]G. As G generates G1, this is
+        // what makes the test accept every point of G1.
+        let (gx, gy) = Affine::GENERATOR.xy().unwrap();
+        let phi_g = Affine::new(&gx * &BETA, gy).expect("φ maps the curve to itself");
+        assert_eq!(phi_g, -&(&Affine::GENERATOR * &(&Z_ABS * &Z_ABS)));
+    }
+
+    #[test]
+    fn subgroup_check_matches_order_check() {
+        assert!(Affine::IDENTITY.is_in_correct_subgroup());
+
+        // multiples of the generator are in G1
+        for k in [fp!("0x1"), fp!("0x2"), fp!("0x263dbd792f5b1be47ed85f8938c0f29586af0d3ac7b977f2")]
+        {
+            let p = &Affine::GENERATOR * &k;
+            assert!(has_order_dividing_r(&p));
+            assert!(p.is_in_correct_subgroup());
+        }
+
+        // the points with these x-coordinates are on the curve but outside G1; clearing the
+        // cofactor maps them into G1
+        for x in [4, 5, 6] {
+            let p = Affine::decompress(Fq::from_u32(x), false).expect("should be on curve");
+            assert!(!has_order_dividing_r(&p));
+            assert!(!p.is_in_correct_subgroup());
+
+            let cleared = p.clear_cofactor();
+            assert!(!cleared.is_identity());
+            assert!(has_order_dividing_r(&cleared));
+            assert!(cleared.is_in_correct_subgroup());
+        }
+    }
+
+    /// EIP-2537 `bls_g1mul_g1_not_in_correct_subgroup` test vector: on the curve, outside G1.
+    #[test]
+    #[rustfmt::skip]
+    fn eip2537_point_not_in_subgroup() {
+        let x = fp!("0x0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef");
+        let y = fp!("0x193fb7cedb32b2c3adc06ec11a96bc0d661869316f5e4a577a9f7c179593987beb4fb2ee424dbb2f5dd891e228b46c4a");
+
+        let p = Affine::new(x, y).expect("should be on curve");
+        assert!(!has_order_dividing_r(&p));
+        assert!(!p.is_in_correct_subgroup());
+        assert!(Affine::new_in_subgroup(x, y).is_none());
     }
 
     /// EIP-2537 - G1 scalar multiplication test vectors: verify [k]G == (x, y).

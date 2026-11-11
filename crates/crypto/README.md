@@ -66,8 +66,8 @@ and revm's default crypto delegates to it.
 | EIP-196 G1 add (BN254)      |        2,282 |      9,552 | `substrate-bn`   |   4.19x |
 | EIP-196 G1 mul (BN254)      |       68,496 |  1,302,678 | `substrate-bn`   |  19.02x |
 | EIP-2537 G1 add (BLS12-381) |        3,394 |     13,625 | `blst`           |   4.01x |
-| EIP-2537 G1 MSM, k=1        |      189,395 |  1,316,125 | `blst`           |   6.95x |
-| EIP-2537 G1 MSM, k=128      |   19,412,368 | 69,095,071 | `blst`           |   3.56x |
+| EIP-2537 G1 MSM, k=1        |      126,658 |  1,316,125 | `blst`           |  10.39x |
+| EIP-2537 G1 MSM, k=128      |   10,536,595 | 69,095,071 | `blst`           |   6.56x |
 | modexp 256-bit              |       30,566 |    851,596 | `aurora`         |  27.86x |
 
 ## Acknowledgements
