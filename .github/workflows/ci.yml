@@ -24,7 +24,6 @@ env:
   # rzup component versions. r0vm must match the minor version of risc0-zkvm in bench/Cargo.lock,
   # and a different guest toolchain changes the benchmark numbers.
   RISC0_RUST: 1.97.0
-  RISC0_CPP: 2024.1.5
   R0VM: 3.0.6
 
 jobs:
@@ -126,7 +125,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           rzup install rust ${{ env.RISC0_RUST }}
-          rzup install cpp ${{ env.RISC0_CPP }}
 
       - name: Cache cargo-risczero
         id: cache-risczero
@@ -174,7 +172,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           rzup install rust ${{ env.RISC0_RUST }}
-          rzup install cpp ${{ env.RISC0_CPP }}
           rzup install r0vm ${{ env.R0VM }}
 
       - name: Run benchmarks
