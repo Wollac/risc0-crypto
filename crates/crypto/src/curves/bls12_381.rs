@@ -92,7 +92,7 @@ impl CurveConfig<LIMBS_384> for Config {
             return true; // the identity is in every subgroup
         };
 
-        // [z²]P = [|z|]([|z|]P), the sign of z cancels
+        // [z²]P as two multiplications by |z|
         let z2p = &(p * &Z_ABS) * &Z_ABS;
         let Some((z2x, z2y)) = z2p.xy_unverified() else {
             // -[z²]P = O cannot equal φ(P), which is not the identity. Not reachable for a point
