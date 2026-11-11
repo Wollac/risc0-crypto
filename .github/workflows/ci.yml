@@ -21,6 +21,10 @@ env:
   # risc0 commit to build cargo-risczero from: "Fix cargo risczero guest test", the head of
   # risc0/risc0#3713 (formerly the branch victor/feb12-af1f67c8).
   CARGO_RISCZERO_REV: 2d184364731643279835f281d9244a15c7149a06
+  # rzup component versions. r0vm must match the minor version of risc0-zkvm in bench/Cargo.lock,
+  # and a different guest toolchain changes the benchmark numbers.
+  RISC0_RUST: 1.97.0
+  R0VM: 3.0.6
 
 jobs:
   clippy:
@@ -120,8 +124,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rzup install rust
-          rzup install cpp
+          rzup install rust ${{ env.RISC0_RUST }}
 
       - name: Cache cargo-risczero
         id: cache-risczero
@@ -168,9 +171,8 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          rzup install rust
-          rzup install cpp
-          rzup install r0vm
+          rzup install rust ${{ env.RISC0_RUST }}
+          rzup install r0vm ${{ env.R0VM }}
 
       - name: Run benchmarks
         run: >
