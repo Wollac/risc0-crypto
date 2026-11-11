@@ -72,31 +72,17 @@ impl CurveConfig<LIMBS_384> for Config {
 
     /// Tests G1 membership with the curve endomorphism instead of checking `[r]P == O`.
     ///
-    /// The map `φ(x, y) = (βx, y)`, for a primitive cube root of unity `β` in `Fq`, sends the
-    /// curve to itself. A point `P` on the curve is in G1 if and only if
+    /// With `φ(x, y) = (βx, y)` for a cube root of unity `β`, and the BLS parameter `z`, a point
+    /// `P` on the curve is in G1 if and only if
     ///
     /// ```text
     /// φ(P) == -[z²]P
     /// ```
     ///
-    /// where `z` is the BLS parameter. That takes two multiplications by the 64-bit `|z|` instead
-    /// of one by the 255-bit `r`. It is the G1 test of [Scott][scott], analyzed further by
-    /// [El Housni, Guillevic and Piellard][ehgp], and the one [EIP-2537][eip] specifies.
-    ///
-    /// # Why the test is exact
-    ///
-    /// 1. `φ` maps the curve to itself, because `(βx)³ + 4 = x³ + 4 = y²`.
-    /// 2. `φ²(P) + φ(P) + P = O` for every point `P` on the curve. The three points share `y`, and
-    ///    their x-coordinates `x`, `βx`, `β²x` are the three roots of `X³ = y² - 4`. They are
-    ///    therefore the three intersections, counted with multiplicity, of the curve with a
-    ///    horizontal line, and such points sum to the identity.
-    /// 3. The test only accepts points of G1. If `φ(P) = -[z²]P`, then `φ²(P) = [z⁴]P` and step 2
-    ///    reads `[r]P = O`, because `r = z⁴ - z² + 1`. The cofactor is coprime to `r`, so every
-    ///    point with `[r]P = O` is in G1.
-    /// 4. The test accepts every point of G1. `φ` preserves the order of a point and G1 is the only
-    ///    subgroup of order `r`, so `φ` maps G1 to itself. G1 is cyclic, hence `φ` acts on it as
-    ///    multiplication by a constant, which can be read off the generator: `φ(G) = -[z²]G` for
-    ///    the `β` used here.
+    /// which takes two multiplications by the 64-bit `|z|` instead of one by the 255-bit `r`. It is
+    /// sound because `φ² + φ + 1 = 0` on the curve and `r = z⁴ - z² + 1`, so the test implies
+    /// `[r]P = O`. See [Scott][scott], [El Housni, Guillevic and Piellard][ehgp] and
+    /// [EIP-2537][eip].
     ///
     /// [scott]: https://eprint.iacr.org/2021/1130
     /// [ehgp]: https://eprint.iacr.org/2022/352
