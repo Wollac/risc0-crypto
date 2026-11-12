@@ -26,21 +26,26 @@ type Uf<P, const N: usize> = UnverifiedFp<P, N>;
 /// All methods are safe - unsafe FFI is contained within the backend implementation. The four
 /// required primitives are `add_assign`, `sub_assign`, `mul_assign`, and `inv`; all other
 /// methods have default implementations that delegate to these.
+///
+/// An [`UnverifiedFp`] operand may hold any value, including one `>= p`, and every method must
+/// compute the correct result modulo `p` for it. Subtraction is the one primitive a backend may
+/// only support for a canonical subtrahend, so that operand is an [`Fp`].
 pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
     /// Computes `a + b mod p` in place.
     fn add_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
     /// Computes `a - b mod p` in place.
-    fn sub_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
+    fn sub_assign(a: &mut Uf<P, N>, b: &Fp<P, N>);
     /// Computes `a * b mod p` in place.
     fn mul_assign(a: &mut Uf<P, N>, b: &Uf<P, N>);
 
     /// Computes `a⁻¹ mod p`. Panics if `a` is zero.
     fn inv(a: &Uf<P, N>) -> Uf<P, N>;
 
-    /// Computes `a = 0 - a mod p` in place.
+    /// Computes `a = -a mod p` in place, as `a * (p - 1)`. Not `0 - a`, which a backend may only
+    /// support for `a <= p`.
     #[inline]
     fn neg_in_place(a: &mut Uf<P, N>) {
-        *a = Self::sub(Uf::wrap_ref(&BigInt::ZERO), a);
+        Self::mul_assign(a, Fp::NEG_ONE.as_unverified());
     }
 
     /// Computes `a² mod p` in place.
@@ -59,7 +64,7 @@ pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
 
     /// Non-assign version of [`sub_assign`](Self::sub_assign).
     #[inline]
-    fn sub(a: &Uf<P, N>, b: &Uf<P, N>) -> Uf<P, N> {
+    fn sub(a: &Uf<P, N>, b: &Fp<P, N>) -> Uf<P, N> {
         let mut r = *a;
         Self::sub_assign(&mut r, b);
         r
@@ -76,9 +81,7 @@ pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
     /// Non-assign version of [`neg_in_place`](Self::neg_in_place).
     #[inline]
     fn neg(a: &Uf<P, N>) -> Uf<P, N> {
-        let mut r = *a;
-        Self::neg_in_place(&mut r);
-        r
+        Self::mul(a, Fp::NEG_ONE.as_unverified())
     }
 
     /// Reduces `a` into `[0, p)`, returning a canonical [`Fp`].
@@ -207,6 +210,14 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
     /// The field modulus (`p`).
     pub const MODULUS: BigInt<N> = P::MODULUS;
 
+    /// `p - 1`, which is `-1 mod p`. The lowest limb of a prime is nonzero, so there is no borrow
+    /// (a zero limb fails const evaluation).
+    const NEG_ONE: Self = {
+        let mut limbs = P::MODULUS.0;
+        limbs[0] -= 1;
+        Self { inner: BigInt(limbs), _marker: PhantomData }
+    };
+
     /// Shift factor for processing byte slices in chunks of `N * 4 - 1` bytes.
     const CHUNK_BASE: BigInt<N> = {
         let mut limbs = [0u32; N];
@@ -264,13 +275,19 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
         self.as_unverified().pow(exp).check()
     }
 
-    /// Computes a square root mod p.
+    /// Computes a square root mod p via `self^((p+1)/4)`.
     ///
     /// Returns `None` if `self` is not a quadratic residue.
     /// Only available when `p % 4 == 3` (enforced at compile time).
-    #[inline]
+    ///
+    /// Never inlined: as its own function the exponentiation loop compiles tighter than inside a
+    /// large caller, which is worth about 1.5% of a secp256k1 recovery (1% on P-256, 0.2% on
+    /// P-384).
+    #[inline(never)]
     pub fn sqrt(&self) -> Option<Self> {
-        self.as_unverified().sqrt().map(UnverifiedFp::check)
+        let x = self.as_unverified();
+        let root = x.pow(&P::MODULUS_PLUS_ONE_DIV_FOUR);
+        if (&root * &root).check_is_eq(x) { Some(root.check()) } else { None }
     }
 
     /// Mathematically reduces an arbitrary [`BigInt`] into a valid field element in `[0, p)`.
@@ -355,6 +372,9 @@ impl<P, const N: usize> core::fmt::Debug for Fp<P, N> {
 //
 // - &ref Op &ref: delegates to UnverifiedFp, then .check()
 // - val OpAssign &ref: in-place via as_unverified_mut(), then assert
+// - subtraction calls the backend directly: UnverifiedFp has none, the subtrahend must be an Fp
+// - negation is 0 - self: the operand is canonical, so the subtraction circuit applies, and it is
+//   cheaper than the multiplication that UnverifiedFp negation needs
 
 impl<P: FieldConfig<N>, const N: usize> Add for &Fp<P, N> {
     type Output = Fp<P, N>;
@@ -368,7 +388,7 @@ impl<P: FieldConfig<N>, const N: usize> Sub for &Fp<P, N> {
     type Output = Fp<P, N>;
     #[inline]
     fn sub(self, rhs: Self) -> Fp<P, N> {
-        (self.as_unverified() - rhs.as_unverified()).check()
+        P::Ops::sub(self.as_unverified(), rhs).check()
     }
 }
 
@@ -384,7 +404,7 @@ impl<P: FieldConfig<N>, const N: usize> Neg for &Fp<P, N> {
     type Output = Fp<P, N>;
     #[inline]
     fn neg(self) -> Fp<P, N> {
-        (-self.as_unverified()).check()
+        P::Ops::sub(P::ZERO.as_unverified(), self).check()
     }
 }
 
@@ -399,11 +419,11 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> AddAssign<
     }
 }
 
-impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> SubAssign<&T> for Fp<P, N> {
+impl<P: FieldConfig<N>, const N: usize> SubAssign<&Self> for Fp<P, N> {
     #[inline]
-    fn sub_assign(&mut self, rhs: &T) {
+    fn sub_assign(&mut self, rhs: &Self) {
         // SAFETY: the assert restores the Fp invariant.
-        unsafe { *self.as_unverified_mut() -= rhs.as_ref() };
+        P::Ops::sub_assign(unsafe { self.as_unverified_mut() }, rhs);
         if self.inner >= P::MODULUS {
             unverified::canonical_panic();
         }

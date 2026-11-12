@@ -13,7 +13,6 @@ use crate::{
     BitAccess,
     field::{FieldConfig, Fp, UnverifiedFp},
 };
-use bytemuck::TransparentWrapper;
 use core::{
     hash::{Hash, Hasher},
     ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
@@ -117,8 +116,7 @@ pub trait CurveConfig<const N: usize>: Sized + Send + Sync + 'static {
         if cofactor::is_one::<Self, _>() {
             return true;
         }
-        let order = UnverifiedFp::wrap_ref(&Self::ScalarFieldConfig::MODULUS);
-        (p * order).is_identity()
+        p.scalar_mul(&Self::ScalarFieldConfig::MODULUS).is_identity()
     }
 }
 
@@ -258,7 +256,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         rhs *= x;
         rhs += &C::COEFF_B;
 
-        let y = rhs.sqrt()?.check();
+        let y = rhs.check_ref().sqrt()?;
         let neg_y = -&y;
         if y.as_bigint().is_even() { Some((y, neg_y)) } else { Some((neg_y, y)) }
     }
@@ -383,7 +381,10 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     }
 
     /// Computes `a + b` and writes the result into `self`.
-    #[inline]
+    ///
+    /// Always inlined: with a plain `#[inline]` the compiler keeps it out of line at 384 bits, and
+    /// the call per addition costs about 2% in the scalar multiplication loops.
+    #[inline(always)]
     pub fn add_into(&mut self, a: &Self, b: &Self) {
         match (a.identity, b.identity) {
             (_, true) => *self = *a,
@@ -441,7 +442,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     ///
     /// Works for any point on the curve regardless of subgroup. The scalar is interpreted as an
     /// unsigned integer and may be `>= n` (the group order).
-    fn scalar_mul(&self, scalar: &(impl BitAccess + ?Sized)) -> Self {
+    pub(crate) fn scalar_mul(&self, scalar: &(impl BitAccess + ?Sized)) -> Self {
         let n = scalar.bits();
         if self.identity || n == 0 {
             return Self::IDENTITY;
@@ -587,23 +588,22 @@ impl<C: CurveConfig<N>, const N: usize> SubAssign<&Self> for AffinePoint<C, N> {
     }
 }
 
-impl<C: CurveConfig<N>, const N: usize, T: AsRef<UnverifiedFp<C::ScalarFieldConfig, N>>> Mul<&T>
-    for &AffinePoint<C, N>
-{
+// The scalar is a checked field element: scalar_mul reads its limbs as an integer, and on a
+// curve with a cofactor [k]P and [k + n]P can differ, so an unverified scalar is not accepted.
+
+impl<C: CurveConfig<N>, const N: usize> Mul<&ScalarField<C, N>> for &AffinePoint<C, N> {
     type Output = AffinePoint<C, N>;
 
     #[inline]
-    fn mul(self, scalar: &T) -> Self::Output {
-        self.scalar_mul(scalar.as_ref().as_bigint())
+    fn mul(self, scalar: &ScalarField<C, N>) -> Self::Output {
+        self.scalar_mul(scalar.as_bigint())
     }
 }
 
-impl<C: CurveConfig<N>, const N: usize, T: AsRef<UnverifiedFp<C::ScalarFieldConfig, N>>>
-    MulAssign<&T> for AffinePoint<C, N>
-{
+impl<C: CurveConfig<N>, const N: usize> MulAssign<&ScalarField<C, N>> for AffinePoint<C, N> {
     #[inline]
-    fn mul_assign(&mut self, scalar: &T) {
-        *self = self.scalar_mul(scalar.as_ref().as_bigint());
+    fn mul_assign(&mut self, scalar: &ScalarField<C, N>) {
+        *self = self.scalar_mul(scalar.as_bigint());
     }
 }
 
@@ -713,6 +713,10 @@ mod tests {
             for k in 0..n {
                 let expected = GROUP[((i as u32 * k) % n) as usize];
                 assert_eq!(p * &Fr::from_u32(k), expected, "failed for [{k}]GROUP[{i}]");
+
+                let mut q = *p;
+                q *= &Fr::from_u32(k);
+                assert_eq!(q, expected, "failed for GROUP[{i}] *= {k}");
             }
         }
     }
@@ -750,6 +754,12 @@ mod tests {
 
         // no curve point at x = 1
         assert!(Affine::ys_from_x(fq(1)).is_none());
+
+        // a non-canonical x gives the result of its residue: 7 = 0, 9 = 2 and 8 = 1 mod 7
+        let raw = |v| UnverifiedFp::<FqConfig, 8>::from_bigint(BigInt::from_u32(v));
+        assert_eq!(Affine::ys_from_x(raw(7)), Affine::ys_from_x(fq(0)));
+        assert_eq!(Affine::ys_from_x(raw(9)), Affine::ys_from_x(fq(2)));
+        assert!(Affine::ys_from_x(raw(8)).is_none());
 
         // decompress roundtrip
         assert_eq!(Affine::decompress(fq(0), false), Some(pt(0, 6)));
