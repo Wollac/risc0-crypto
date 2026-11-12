@@ -110,7 +110,6 @@ pub type Affine = AffinePoint<Config, LIMBS_384>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::UnverifiedFp;
     use rstest::rstest;
 
     curve_sanity_tests!();
@@ -138,7 +137,7 @@ mod tests {
 
     /// The definition of G1 membership, `[r]P == O`, which the endomorphism test replaces.
     fn has_order_dividing_r(p: &Affine) -> bool {
-        (p * &UnverifiedFp::from_bigint(FrConfig::MODULUS)).is_identity()
+        p.scalar_mul(&FrConfig::MODULUS).is_identity()
     }
 
     #[test]

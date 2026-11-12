@@ -44,14 +44,14 @@ This is a `no_std` Rust library providing ergonomic elliptic curve and field ari
    - `FieldOps<P, N>` trait: safe backend interface for field arithmetic (`add`, `sub`, `mul`, `inv`, `reduce`, etc.). `R0VMFieldOps` is the R0VM backend - all unsafe FFI is encapsulated there
    - Operator overloads (`+`, `-`, `*`, unary `-`) produce canonical results in `[0, p)`
    - For intermediate computations, use `UnverifiedFp<P, N>` (skips canonicality checks), then call `.check()` to assert canonical and convert back to `Fp`. For values that may not be canonical, use `Fp::reduce_from_bigint()` to force reduction
-   - `Fp` implements `AsRef<UnverifiedFp<P, N>>`, so `Fp` values can be used directly in `UnverifiedFp` arithmetic and as scalars in `AffinePoint * scalar`
+   - `Fp` implements `AsRef<UnverifiedFp<P, N>>`, so `Fp` values can be used directly in `UnverifiedFp` arithmetic
 
 3. **`AffinePoint<C, N>`** (`crates/crypto/src/curve/`) - Short Weierstrass curve point in affine coordinates.
    - **On-curve invariant**: every `AffinePoint` satisfies `y² = x³ + ax + b` (or is identity). Subgroup membership is not enforced.
    - Constructors: `new()` (on-curve check), `new_in_subgroup()` (on-curve + subgroup), `unsafe new_unchecked()` (external), `pub(crate) from_xy()` (internal)
    - `CurveConfig<N>` trait: implement to define a new curve (base/scalar field configs, coefficients A/B, generator, cofactor, `type Ops` for backend)
    - `CurveOps<C, N>` trait: EC arithmetic interface (`add_into`/`double_into` write into `&mut Coords`; `add`/`double` return by value). `R0VMCurveOps` is the R0VM backend.
-   - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul)
+   - Operator overloads: `+`, `-` (binary and unary), `*` (scalar mul). The scalar is a checked `Fp`: the multiplication reads its limbs as an integer, and on a curve with a cofactor `[k]P` and `[k + n]P` can differ. Integer scalars (group order, cofactor) go through the crate-private `scalar_mul`
    - Inherent methods: `double()` / `double_into()` for doubling, `add_into()` for addition into a target buffer. Scalar multiplication uses double-buffered `_into` calls.
    - `AffinePoint` stores `Coords + bool` (not `Option<Coords>`) so `_into` methods always have a writable coords buffer, even for identity points.
    - Coordinates may not be canonical after arithmetic - access via `xy()` / `xy_ref()` (check) or `xy_unverified()` (deferred)
@@ -85,6 +85,7 @@ Grumpkin reuses BN254's fields (its base field is BN254's scalar field and vice 
 - **Zero heap allocation**: all types are stack-allocated, `no_std` compatible
 - **Cofactor-1 optimization**: `COFACTOR` is a `&'static [u32]` LE slice on `CurveConfig`. Default `is_in_correct_subgroup()` and `clear_cofactor()` check `cofactor_is_one()` at compile time - cofactor-1 curves need no override
 - **`UnverifiedFp` check semantics**: `UnverifiedFp` holds possibly non-canonical field values from unconstrained VM operations. Arithmetic is always sound inside. When leaving the struct (extracting an `Fp` or producing a field-semantic `bool`), call `.check()` to assert the value is already canonical. For values that may not be canonical, use `Fp::reduce_from_bigint()`. The same check semantics apply to comparisons via `check_is_eq()`.
+- **`UnverifiedFp` operations accept any value**: an `UnverifiedFp` can hold a raw integer `>= p` (e.g. the byte chunks in `from_be_bytes_mod_order`), and `+`, `*`, unary `-`, `inverse` and `pow` are correct modulo `p` for it. The circuit subtraction is not: it computes `a - b + p`, and for `b > a + p` the executor returns a wrong value and proving fails. So `UnverifiedFp` has no subtraction (`FieldOps::sub` takes the subtrahend as `&Fp`), and negation is a multiplication by `p - 1`, not `0 - a`.
 - **No software field arithmetic**: every `Fp` operator, including negation, goes through the backend. Plain limb arithmetic costs about 5 cycles per limb for moduli made of all-ones and zero limbs but about 10 for arbitrary ones, so it only beats a syscall for some fields; the syscall costs the same for every modulus.
 - **No input/output aliasing for EC and field inverse**: EC circuit blobs have multiple `EqualZeroOp` constraints; during proving, a kWrite to the output arena in an earlier constraint corrupts kReads from an aliased input arena ("Bad carry"). Field inverse has the same multi-constraint structure but is coincidentally safe due to zirgen Flattener operand ordering - not a structural guarantee. Both `CurveFfi` and `FieldFfi::sys_inv` take inputs by reference to enforce non-aliasing at the type level.
 

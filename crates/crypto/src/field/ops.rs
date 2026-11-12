@@ -8,7 +8,7 @@
 
 use super::Uf;
 use crate::{
-    BigInt,
+    BigInt, Fp,
     field::{FieldConfig, FieldOps},
 };
 use bytemuck::TransparentWrapper;
@@ -100,11 +100,12 @@ where
         unsafe { FieldFfi::sys_add(ptr, cast_ptr(b), &P::MODULUS, ptr) }
     }
 
+    // the circuit computes a - b + p, which must not be negative; b < p guarantees that for any a
     #[inline]
-    fn sub_assign(a: &mut Uf<P, N>, b: &Uf<P, N>) {
+    fn sub_assign(a: &mut Uf<P, N>, b: &Fp<P, N>) {
         let ptr = cast_ptr_mut(ptr::from_mut(a));
         // SAFETY: out aliases a per FieldFfi contract.
-        unsafe { FieldFfi::sys_sub(ptr, cast_ptr(b), &P::MODULUS, ptr) }
+        unsafe { FieldFfi::sys_sub(ptr, b.as_bigint(), &P::MODULUS, ptr) }
     }
 
     #[inline]
@@ -122,13 +123,6 @@ where
             FieldFfi::sys_inv(a.as_bigint(), &P::MODULUS, cast_ptr_mut(out.as_mut_ptr()));
             out.assume_init()
         }
-    }
-
-    #[inline]
-    fn neg_in_place(a: &mut Uf<P, N>) {
-        let ptr = cast_ptr_mut(ptr::from_mut(a));
-        // SAFETY: out aliases a per FieldFfi contract.
-        unsafe { FieldFfi::sys_sub(&BigInt::ZERO, ptr, &P::MODULUS, ptr) }
     }
 
     #[inline]
@@ -154,13 +148,13 @@ where
     }
 
     #[inline]
-    fn sub(a: &Uf<P, N>, b: &Uf<P, N>) -> Uf<P, N> {
+    fn sub(a: &Uf<P, N>, b: &Fp<P, N>) -> Uf<P, N> {
         // SAFETY: out is fully written by sys_sub before assume_init.
         unsafe {
             let mut out = MaybeUninit::uninit();
             FieldFfi::sys_sub(
                 cast_ptr(a),
-                cast_ptr(b),
+                b.as_bigint(),
                 &P::MODULUS,
                 cast_ptr_mut(out.as_mut_ptr()),
             );
@@ -176,21 +170,6 @@ where
             FieldFfi::sys_mul(
                 cast_ptr(a),
                 cast_ptr(b),
-                &P::MODULUS,
-                cast_ptr_mut(out.as_mut_ptr()),
-            );
-            out.assume_init()
-        }
-    }
-
-    #[inline]
-    fn neg(a: &Uf<P, N>) -> Uf<P, N> {
-        // SAFETY: out is fully written by sys_sub before assume_init.
-        unsafe {
-            let mut out = MaybeUninit::uninit();
-            FieldFfi::sys_sub(
-                &BigInt::ZERO,
-                cast_ptr(a),
                 &P::MODULUS,
                 cast_ptr_mut(out.as_mut_ptr()),
             );

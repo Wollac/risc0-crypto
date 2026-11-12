@@ -4,7 +4,7 @@ use crate::{
 };
 use core::{
     marker::PhantomData,
-    ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign},
+    ops::{Add, AddAssign, Mul, MulAssign, Neg},
 };
 
 /// Asserts that `$val` is in `[0, p)`, panicking via [`canonical_panic`] if not.
@@ -27,6 +27,9 @@ macro_rules! assert_canonical {
 ///
 /// Arithmetic on `UnverifiedFp` correctly handles redundant representations (i.e., inputs >= `p`
 /// still produce mathematically correct results modulo `p`).
+///
+/// There is no subtraction: the underlying operation needs a canonical subtrahend, so `-` is only
+/// defined between [`Fp`] values. Negation works for any value, at the cost of a multiplication.
 ///
 /// To extract a canonical [`Fp`], you must cross the verification boundary:
 /// - Use [`check()`](Self::check) if the value *should* be canonical. This asserts the value is `<
@@ -175,6 +178,11 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
     ///
     /// Returns `None` if `self` is not a quadratic residue. Only available when
     /// `p % 4 == 3` (enforced at compile time).
+    ///
+    /// # Panics
+    ///
+    /// Panics if `self` is not in `[0, p)`, as the final comparison is a
+    /// [`check_is_eq`](Self::check_is_eq).
     #[inline]
     pub fn sqrt(&self) -> Option<Self> {
         let root = self.pow(&P::MODULUS_PLUS_ONE_DIV_FOUR);
@@ -230,16 +238,6 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> Add<&T>
     }
 }
 
-impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> Sub<&T>
-    for &UnverifiedFp<P, N>
-{
-    type Output = UnverifiedFp<P, N>;
-    #[inline]
-    fn sub(self, rhs: &T) -> UnverifiedFp<P, N> {
-        P::Ops::sub(self, rhs.as_ref())
-    }
-}
-
 impl<P: FieldConfig<N>, const N: usize, T: AsRef<UnverifiedFp<P, N>>> Mul<&T>
     for &UnverifiedFp<P, N>
 {
@@ -262,13 +260,6 @@ impl<P: FieldConfig<N>, const N: usize, T: AsRef<Self>> AddAssign<&T> for Unveri
     #[inline]
     fn add_assign(&mut self, rhs: &T) {
         P::Ops::add_assign(self, rhs.as_ref());
-    }
-}
-
-impl<P: FieldConfig<N>, const N: usize, T: AsRef<Self>> SubAssign<&T> for UnverifiedFp<P, N> {
-    #[inline]
-    fn sub_assign(&mut self, rhs: &T) {
-        P::Ops::sub_assign(self, rhs.as_ref());
     }
 }
 
@@ -341,8 +332,8 @@ mod tests {
     fn ops() {
         assert_eq!((&uf(3) + &uf(5)).check(), F::from_u32(1));
         assert_eq!((&uf(3) * &uf(5)).check(), F::from_u32(1));
-        assert_eq!((&uf(5) - &uf(3)).check(), F::from_u32(2));
         assert_eq!((-&uf(3)).check(), F::from_u32(4));
+        assert_eq!((-&uf(0)).check(), F::ZERO);
         assert_eq!(uf(3).inverse().check(), F::from_u32(5));
     }
 
@@ -352,9 +343,6 @@ mod tests {
         let mut r = uf(3);
         r += &two;
         assert_eq!(r.check(), F::from_u32(5));
-        let mut r = uf(3);
-        r -= &two;
-        assert_eq!(r.check(), F::from_u32(1));
         let mut r = uf(3);
         r *= &two;
         assert_eq!(r.check(), F::from_u32(6));
@@ -371,6 +359,16 @@ mod tests {
 
         assert_eq!((&three + &two).check(), F::from_u32(5));
         assert_eq!((&three * &two).check(), F::from_u32(6));
-        assert_eq!((&three - &two).check(), F::from_u32(1));
+        assert_eq!((-&three).check(), F::from_u32(4));
+        assert_eq!((&(-&three) + &two).check(), F::from_u32(6)); // 2 - 3
+
+        let mut r = three;
+        r.neg_in_place();
+        assert_eq!(r.check(), F::from_u32(4));
+
+        // non-canonical zero, and the largest value the limbs can hold
+        assert_eq!((-&uf(7)).check(), F::ZERO);
+        let max = UnverifiedFp::<P, 8>::from_bigint(BigInt::new([u32::MAX; 8]));
+        assert_eq!((&max + &(-&max)).check(), F::ZERO);
     }
 }
