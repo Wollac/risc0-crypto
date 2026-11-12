@@ -381,7 +381,10 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
     }
 
     /// Computes `a + b` and writes the result into `self`.
-    #[inline]
+    ///
+    /// Always inlined: with a plain `#[inline]` the compiler keeps it out of line at 384 bits, and
+    /// the call per addition costs about 2% in the scalar multiplication loops.
+    #[inline(always)]
     pub fn add_into(&mut self, a: &Self, b: &Self) {
         match (a.identity, b.identity) {
             (_, true) => *self = *a,
