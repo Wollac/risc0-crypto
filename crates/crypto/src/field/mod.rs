@@ -372,6 +372,8 @@ impl<P, const N: usize> core::fmt::Debug for Fp<P, N> {
 // - &ref Op &ref: delegates to UnverifiedFp, then .check()
 // - val OpAssign &ref: in-place via as_unverified_mut(), then assert
 // - subtraction calls the backend directly: UnverifiedFp has none, the subtrahend must be an Fp
+// - negation is 0 - self: the operand is canonical, so the subtraction circuit applies, and it is
+//   cheaper than the multiplication that UnverifiedFp negation needs
 
 impl<P: FieldConfig<N>, const N: usize> Add for &Fp<P, N> {
     type Output = Fp<P, N>;
@@ -401,7 +403,7 @@ impl<P: FieldConfig<N>, const N: usize> Neg for &Fp<P, N> {
     type Output = Fp<P, N>;
     #[inline]
     fn neg(self) -> Fp<P, N> {
-        (-self.as_unverified()).check()
+        P::Ops::sub(P::ZERO.as_unverified(), self).check()
     }
 }
 
