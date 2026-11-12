@@ -30,6 +30,8 @@ macro_rules! assert_canonical {
 ///
 /// There is no subtraction: the underlying operation needs a canonical subtrahend, so `-` is only
 /// defined between [`Fp`] values. Negation works for any value, at the cost of a multiplication.
+/// There is no square root either: whether one exists is a decision about the value, so
+/// [`Fp::sqrt`] takes a checked one.
 ///
 /// To extract a canonical [`Fp`], you must cross the verification boundary:
 /// - Use [`check()`](Self::check) if the value *should* be canonical. This asserts the value is `<
@@ -172,21 +174,6 @@ impl<P: FieldConfig<N>, const N: usize> UnverifiedFp<P, N> {
             }
         }
         acc
-    }
-
-    /// Computes a square root mod p via `self^((p+1)/4)`.
-    ///
-    /// Returns `None` if `self` is not a quadratic residue. Only available when
-    /// `p % 4 == 3` (enforced at compile time).
-    ///
-    /// # Panics
-    ///
-    /// Panics if `self` is not in `[0, p)`, as the final comparison is a
-    /// [`check_is_eq`](Self::check_is_eq).
-    #[inline]
-    pub fn sqrt(&self) -> Option<Self> {
-        let root = self.pow(&P::MODULUS_PLUS_ONE_DIV_FOUR);
-        if (&root * &root).check_is_eq(self) { Some(root) } else { None }
     }
 }
 

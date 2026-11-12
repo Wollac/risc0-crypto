@@ -256,7 +256,7 @@ impl<C: CurveConfig<N>, const N: usize> AffinePoint<C, N> {
         rhs *= x;
         rhs += &C::COEFF_B;
 
-        let y = rhs.sqrt()?.check();
+        let y = rhs.check_ref().sqrt()?;
         let neg_y = -&y;
         if y.as_bigint().is_even() { Some((y, neg_y)) } else { Some((neg_y, y)) }
     }

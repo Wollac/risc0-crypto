@@ -16,6 +16,8 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   now a multiplication by `p - 1`.
 - `risc0-crypto` (breaking): `AffinePoint * scalar` takes a checked `&Fp` scalar only. An
   `UnverifiedFp` scalar needs a `check_ref()` first.
+- `risc0-crypto` (breaking): `UnverifiedFp::sqrt` is removed, as it panicked on a value `>= p`.
+  Use `Fp::sqrt`, after a `check_ref()` for an unverified value.
 - `risc0-crypto`: the BLS12-381 G1 subgroup check uses the curve endomorphism instead of a
   multiplication by the group order, taking about 2.8x fewer cycles.
 
