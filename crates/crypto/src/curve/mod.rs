@@ -713,6 +713,10 @@ mod tests {
             for k in 0..n {
                 let expected = GROUP[((i as u32 * k) % n) as usize];
                 assert_eq!(p * &Fr::from_u32(k), expected, "failed for [{k}]GROUP[{i}]");
+
+                let mut q = *p;
+                q *= &Fr::from_u32(k);
+                assert_eq!(q, expected, "failed for GROUP[{i}] *= {k}");
             }
         }
     }
@@ -750,6 +754,12 @@ mod tests {
 
         // no curve point at x = 1
         assert!(Affine::ys_from_x(fq(1)).is_none());
+
+        // a non-canonical x gives the result of its residue: 7 = 0, 9 = 2 and 8 = 1 mod 7
+        let raw = |v| UnverifiedFp::<FqConfig, 8>::from_bigint(BigInt::from_u32(v));
+        assert_eq!(Affine::ys_from_x(raw(7)), Affine::ys_from_x(fq(0)));
+        assert_eq!(Affine::ys_from_x(raw(9)), Affine::ys_from_x(fq(2)));
+        assert!(Affine::ys_from_x(raw(8)).is_none());
 
         // decompress roundtrip
         assert_eq!(Affine::decompress(fq(0), false), Some(pt(0, 6)));

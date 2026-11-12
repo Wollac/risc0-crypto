@@ -41,8 +41,8 @@ pub trait FieldOps<P: FieldConfig<N>, const N: usize>: Send + Sync + 'static {
     /// Computes `a⁻¹ mod p`. Panics if `a` is zero.
     fn inv(a: &Uf<P, N>) -> Uf<P, N>;
 
-    /// Computes `a = -a mod p` in place, as `a * (p - 1)`. Not `0 - a`, which would need `a` to
-    /// be canonical.
+    /// Computes `a = -a mod p` in place, as `a * (p - 1)`. Not `0 - a`, which a backend may only
+    /// support for `a <= p`.
     #[inline]
     fn neg_in_place(a: &mut Uf<P, N>) {
         Self::mul_assign(a, Fp::NEG_ONE.as_unverified());
@@ -281,7 +281,8 @@ impl<P: FieldConfig<N>, const N: usize> Fp<P, N> {
     /// Only available when `p % 4 == 3` (enforced at compile time).
     ///
     /// Never inlined: as its own function the exponentiation loop compiles tighter than inside a
-    /// large caller, which is worth about 1.5% of an ECDSA recovery.
+    /// large caller, which is worth about 1.5% of a secp256k1 recovery (1% on P-256, 0.2% on
+    /// P-384).
     #[inline(never)]
     pub fn sqrt(&self) -> Option<Self> {
         let x = self.as_unverified();

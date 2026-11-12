@@ -357,5 +357,37 @@ mod tests {
         assert_eq!((-&uf(7)).check(), F::ZERO);
         let max = UnverifiedFp::<P, 8>::from_bigint(BigInt::new([u32::MAX; 8]));
         assert_eq!((&max + &(-&max)).check(), F::ZERO);
+
+        // backend subtraction: any minuend, checked subtrahend. 2²⁵⁶ - 1 = 1 mod 7
+        type Ops = <P as FieldConfig<8>>::Ops;
+        assert_eq!(Ops::sub(&three, &two).check(), F::from_u32(1));
+        assert_eq!(Ops::sub(&max, &F::from_u32(6)).check(), F::from_u32(2));
+        let mut r = max;
+        Ops::sub_assign(&mut r, &F::from_u32(6));
+        assert_eq!(r.check(), F::from_u32(2));
+    }
+
+    #[test]
+    fn non_canonical_input_384() {
+        enum P384 {}
+        impl FieldConfig<12> for P384 {
+            const MODULUS: BigInt<12> = BigInt::from_u32(7);
+            type Ops = crate::field::R0VMFieldOps;
+        }
+        type F384 = Fp<P384, 12>;
+
+        // 2³⁸⁴ - 2 = 6 mod 7 (2³⁸⁴ - 1 would be zero)
+        let mut limbs = [u32::MAX; 12];
+        limbs[0] -= 1;
+        let six = UnverifiedFp::<P384, 12>::from_bigint(BigInt::new(limbs));
+
+        assert_eq!((-&six).check(), F384::from_u32(1));
+        assert_eq!((&six + &(-&six)).check(), F384::ZERO);
+        let mut r = six;
+        r.neg_in_place();
+        assert_eq!(r.check(), F384::from_u32(1));
+
+        type Ops = <P384 as FieldConfig<12>>::Ops;
+        assert_eq!(Ops::sub(&six, &F384::from_u32(4)).check(), F384::from_u32(2));
     }
 }

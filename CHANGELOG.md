@@ -10,8 +10,10 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ### Changed
 
 - `risc0-crypto` (breaking): `UnverifiedFp` no longer has `-` and `-=`, which gave unprovable
-  executions for a subtrahend `>= p`. Subtraction is defined between `Fp` values only, and `-=`
-  on an `Fp` takes an `&Fp`. `FieldOps::sub` and `sub_assign` take the subtrahend as `&Fp`.
+  executions when the subtrahend exceeded the minuend by more than `p`. Subtraction is defined
+  between `Fp` values only, and `-=` on an `Fp` takes an `&Fp`. `FieldOps::sub` and `sub_assign`
+  take the subtrahend as `&Fp`. For an unverified minuend, call `FieldOps::sub` with a checked
+  subtrahend, or add the negation.
 - `risc0-crypto`: `UnverifiedFp` negation is correct for any value, including one `>= p`. It is
   now a multiplication by `p - 1`.
 - `risc0-crypto` (breaking): `AffinePoint * scalar` takes a checked `&Fp` scalar only. An
